@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Floot</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #111111;
+      --surface: #1a1a1e;
+      --surface2: #222226;
+      --border: #2a2a2e;
+      --text: #e4e4e7;
+      --text-muted: #71717a;
+      --user-bubble: #2563eb;
+      --user-text: #ffffff;
+      --assistant-bubble: #27272a;
+      --accent: #3b82f6;
+      --red: #ef4444;
+      --green: #22c55e;
+    }
+
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .header-title { font-size: 1rem; font-weight: 600; }
+
+    .header-controls { display: flex; align-items: center; gap: 0.5rem; }
+
+    .mic-select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.75rem;
+      padding: 0.3rem 0.5rem;
+      max-width: 180px;
+      outline: none;
+    }
+
+    .mic-select:focus { border-color: var(--accent); }
+
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      scroll-behavior: smooth;
+    }
+
+    .msg-row {
+      display: flex;
+      flex-direction: column;
+      animation: fadeIn 0.15s ease;
+    }
+
+    .msg-row.user { align-items: flex-end; }
+    .msg-row.assistant { align-items: flex-start; }
+
+    .msg {
+      max-width: 80%;
+      padding: 0.6rem 0.9rem;
+      border-radius: 16px;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg-row.user .msg {
+      background: var(--user-bubble);
+      color: var(--user-text);
+      border-bottom-right-radius: 4px;
+    }
+
+    .msg-row.assistant .msg {
+      background: var(--assistant-bubble);
+      color: var(--text);
+      border-bottom-left-radius: 4px;
+    }
+
+    .msg-row.assistant .msg.playing {
+      outline: 1px solid var(--green);
+      outline-offset: -1px;
+    }
+
+    .play-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 2px 6px;
+      font-size: 0.7rem;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      margin-top: 2px;
+      border-radius: 4px;
+      transition: color 0.15s;
+    }
+
+    .play-btn:hover { color: var(--text); }
+    .play-btn.playing { color: var(--green); }
+    .play-btn svg { width: 12px; height: 12px; }
+
+    .msg-row.status { align-items: center; }
+    .msg-row.status .msg {
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 0.25rem 0;
+    }
+
+    .msg-row.error { align-items: center; }
+    .msg-row.error .msg {
+      background: transparent;
+      color: var(--red);
+      font-size: 0.8rem;
+    }
+
+    .typing-indicator span {
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      animation: blink 1.2s infinite;
+      margin-right: 3px;
+    }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes blink {
+      0%, 60%, 100% { opacity: 0.3; }
+      30% { opacity: 1; }
+    }
+
+    .input-bar {
+      display: flex;
+      align-items: flex-end;
+      gap: 0.5rem;
+      padding: 0.6rem 0.75rem;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .text-input {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      color: var(--text);
+      font-size: 0.9375rem;
+      padding: 0.55rem 1rem;
+      outline: none;
+      resize: none;
+      max-height: 120px;
+      line-height: 1.4;
+      font-family: inherit;
+    }
+
+    .text-input::placeholder { color: var(--text-muted); }
+    .text-input:focus { border-color: var(--accent); }
+
+    .btn {
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.15s ease;
+    }
+
+    .send-btn { background: var(--accent); color: white; }
+    .send-btn:hover { background: #2563eb; }
+    .send-btn:disabled { opacity: 0.3; cursor: default; }
+
+    .mic-btn {
+      background: var(--surface2);
+      border: 2px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .mic-btn:hover { border-color: var(--text-muted); }
+
+    .mic-btn.listening {
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    .mic-btn.speaking {
+      border-color: var(--green);
+      color: var(--green);
+      animation: pulse 1.5s ease infinite;
+    }
+
+    .mic-btn.muted {
+      border-color: var(--border);
+      color: var(--text-muted);
+      opacity: 0.5;
+    }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.3); }
+      50% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+    }
+
+    .mic-btn svg, .send-btn svg { width: 20px; height: 20px; }
+
+    .volume-bar {
+      height: 3px;
+      background: var(--border);
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+
+    .volume-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--green);
+      transition: width 0.08s linear;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span class="header-title">Floot</span>
+    <div class="header-controls">
+      <select id="micSelect" class="mic-select">
+        <option value="">Loading devices...</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="messages" id="messages"></div>
+  <div class="volume-bar"><div class="volume-bar-fill" id="volumeFill"></div></div>
+
+  <div class="input-bar">
+    <textarea class="text-input" id="textInput" placeholder="Type a message..." rows="1"></textarea>
+    <button class="btn mic-btn" id="micBtn" title="Toggle microphone">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>
+    </button>
+    <button class="btn send-btn" id="sendBtn" title="Send message" disabled>
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+    </button>
+  </div>
+
+  <script>
+    const messagesEl = document.getElementById("messages");
+    const textInput = document.getElementById("textInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const micBtn = document.getElementById("micBtn");
+    const micSelect = document.getElementById("micSelect");
+    const volumeFill = document.getElementById("volumeFill");
+
+    const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+    const STOP_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+
+    let ws = null;
+    let currentAssistantRow = null;
+    let currentAssistantMsgEl = null;
+    let assistantText = "";
+
+    // --- Audio context for TTS ---
+    let ttsAudioCtx = null;
+    let ttsSource = null;
+    let ttsPlaying = false;
+    let currentPlayBtn = null;
+    let currentPlayMsgEl = null;
+    let micWasListening = false;
+
+    function getAudioContext() {
+      if (!ttsAudioCtx || ttsAudioCtx.state === "closed") {
+        ttsAudioCtx = new AudioContext();
+      }
+      return ttsAudioCtx;
+    }
+
+    async function playTTSFromUrl(url, playBtn, msgEl) {
+      stopTTS();
+
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const arrayBuf = await resp.arrayBuffer();
+
+        const ctx = getAudioContext();
+        if (ctx.state === "suspended") await ctx.resume();
+
+        const audioBuf = await ctx.decodeAudioData(arrayBuf);
+
+        muteMicForPlayback();
+
+        ttsSource = ctx.createBufferSource();
+        ttsSource.buffer = audioBuf;
+        ttsSource.connect(ctx.destination);
+
+        ttsPlaying = true;
+        currentPlayBtn = playBtn;
+        currentPlayMsgEl = msgEl;
+
+        if (playBtn) {
+          playBtn.innerHTML = STOP_SVG + " Playing";
+          playBtn.classList.add("playing");
+        }
+        if (msgEl) msgEl.classList.add("playing");
+
+        ttsSource.onended = () => {
+          ttsPlaying = false;
+          if (playBtn) {
+            playBtn.innerHTML = PLAY_SVG + " Play";
+            playBtn.classList.remove("playing");
+          }
+          if (msgEl) msgEl.classList.remove("playing");
+          currentPlayBtn = null;
+          currentPlayMsgEl = null;
+          unmuteMicAfterPlayback();
+        };
+
+        ttsSource.start(0);
+      } catch (err) {
+        console.error("TTS playback error:", err);
+        addError("TTS playback failed: " + err.message);
+        unmuteMicAfterPlayback();
+      }
+    }
+
+    function stopTTS() {
+      if (ttsSource) {
+        try { ttsSource.stop(); } catch {}
+        ttsSource = null;
+      }
+      ttsPlaying = false;
+      if (currentPlayBtn) {
+        currentPlayBtn.innerHTML = PLAY_SVG + " Play";
+        currentPlayBtn.classList.remove("playing");
+      }
+      if (currentPlayMsgEl) {
+        currentPlayMsgEl.classList.remove("playing");
+      }
+      currentPlayBtn = null;
+      currentPlayMsgEl = null;
+    }
+
+    function muteMicForPlayback() {
+      micWasListening = vadActive;
+      if (vadActive) {
+        pauseVAD();
+        micBtn.classList.add("muted");
+      }
+    }
+
+    function unmuteMicAfterPlayback() {
+      micBtn.classList.remove("muted");
+      if (micWasListening && micStream) {
+        resumeVAD();
+      }
+    }
+
+    // --- WebSocket ---
+    function connectWebSocket() {
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(`${protocol}//${location.host}`);
+      ws.onopen = () => addStatus("Connected");
+      ws.onmessage = handleServerMessage;
+      ws.onclose = () => {
+        addStatus("Disconnected. Reconnecting...");
+        setTimeout(connectWebSocket, 2000);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    function handleServerMessage(event) {
+      const data = JSON.parse(event.data);
+
+      switch (data.type) {
+        case "status":
+          if (data.message) addStatus(data.message);
+          break;
+
+        case "transcript":
+          addMessage("user", data.text);
+          break;
+
+        case "claude_start":
+          assistantText = "";
+          const row = addAssistantRow();
+          currentAssistantRow = row;
+          currentAssistantMsgEl = row.querySelector(".msg");
+          showTyping(currentAssistantMsgEl);
+          break;
+
+        case "claude_delta":
+          assistantText += data.text;
+          if (currentAssistantMsgEl) {
+            hideTyping(currentAssistantMsgEl);
+            currentAssistantMsgEl.textContent = assistantText;
+            scrollToBottom();
+          }
+          break;
+
+        case "claude_done": {
+          const msgId = data.msgId;
+          if (currentAssistantRow && msgId) {
+            const ttsUrl = `/api/tts/${msgId}`;
+            currentAssistantRow.dataset.ttsUrl = ttsUrl;
+            const playBtn = currentAssistantRow.querySelector(".play-btn");
+            if (playBtn) playBtn.style.display = "flex";
+
+            const msgEl = currentAssistantRow.querySelector(".msg");
+            playTTSFromUrl(ttsUrl, playBtn, msgEl);
+          }
+          currentAssistantMsgEl = null;
+          currentAssistantRow = null;
+          break;
+        }
+
+        case "error":
+          addError(data.message);
+          break;
+      }
+    }
+
+    // --- Messages UI ---
+    function addMessage(role, text) {
+      const row = document.createElement("div");
+      row.className = `msg-row ${role}`;
+      const msg = document.createElement("div");
+      msg.className = "msg";
+      msg.textContent = text;
+      row.appendChild(msg);
+      messagesEl.appendChild(row);
+      scrollToBottom();
+      return row;
+    }
+
+    function addAssistantRow() {
+      const row = document.createElement("div");
+      row.className = "msg-row assistant";
+
+      const msg = document.createElement("div");
+      msg.className = "msg";
+      row.appendChild(msg);
+
+      const playBtn = document.createElement("button");
+      playBtn.className = "play-btn";
+      playBtn.innerHTML = PLAY_SVG + " Play";
+      playBtn.style.display = "none";
+      playBtn.addEventListener("click", () => {
+        if (ttsPlaying && currentPlayBtn === playBtn) {
+          stopTTS();
+          unmuteMicAfterPlayback();
+        } else {
+          const url = row.dataset.ttsUrl;
+          if (url) playTTSFromUrl(url, playBtn, msg);
+        }
+      });
+      row.appendChild(playBtn);
+
+      messagesEl.appendChild(row);
+      scrollToBottom();
+      return row;
+    }
+
+    function addStatus(text) {
+      const row = document.createElement("div");
+      row.className = "msg-row status";
+      const msg = document.createElement("div");
+      msg.className = "msg";
+      msg.textContent = text;
+      row.appendChild(msg);
+      messagesEl.appendChild(row);
+      scrollToBottom();
+    }
+
+    function addError(text) {
+      const row = document.createElement("div");
+      row.className = "msg-row error";
+      const msg = document.createElement("div");
+      msg.className = "msg";
+      msg.textContent = text;
+      row.appendChild(msg);
+      messagesEl.appendChild(row);
+      scrollToBottom();
+    }
+
+    function showTyping(el) {
+      const indicator = document.createElement("span");
+      indicator.className = "typing-indicator";
+      indicator.innerHTML = "<span></span><span></span><span></span>";
+      el.appendChild(indicator);
+    }
+
+    function hideTyping(el) {
+      const t = el.querySelector(".typing-indicator");
+      if (t) t.remove();
+    }
+
+    function scrollToBottom() {
+      requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
+    }
+
+    // --- Text input ---
+    textInput.addEventListener("input", () => {
+      sendBtn.disabled = !textInput.value.trim();
+      textInput.style.height = "auto";
+      textInput.style.height = Math.min(textInput.scrollHeight, 120) + "px";
+    });
+
+    textInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendText();
+      }
+    });
+
+    sendBtn.addEventListener("click", sendText);
+
+    function sendText() {
+      const text = textInput.value.trim();
+      if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({ type: "text", content: text }));
+      textInput.value = "";
+      textInput.style.height = "auto";
+      sendBtn.disabled = true;
+    }
+
+    // --- Mic device enumeration ---
+    async function loadDevices() {
+      try {
+        await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioInputs = devices.filter(d => d.kind === "audioinput");
+        micSelect.innerHTML = "";
+        audioInputs.forEach((d, i) => {
+          const opt = document.createElement("option");
+          opt.value = d.deviceId;
+          opt.textContent = d.label || `Microphone ${i + 1}`;
+          micSelect.appendChild(opt);
+        });
+      } catch (e) {
+        micSelect.innerHTML = "<option>No mic access</option>";
+      }
+    }
+
+    navigator.mediaDevices.addEventListener("devicechange", loadDevices);
+    loadDevices();
+
+    // --- VAD + Recording ---
+    const VAD_THRESHOLD = 0.015;
+    const SILENCE_TIMEOUT_MS = 1500;
+    const MIN_SPEECH_MS = 400;
+
+    let micStream = null;
+    let audioContext = null;
+    let analyser = null;
+    let mediaRecorder = null;
+    let chunks = [];
+    let vadActive = false;
+    let isSpeaking = false;
+    let silenceStart = 0;
+    let speechStart = 0;
+    let vadRAF = 0;
+
+    micBtn.addEventListener("click", () => {
+      if (ttsPlaying) {
+        stopTTS();
+        unmuteMicAfterPlayback();
+        return;
+      }
+      if (micStream) {
+        stopMic();
+      } else {
+        startMic();
+      }
+    });
+
+    async function startMic() {
+      try {
+        const deviceId = micSelect.value || undefined;
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+        });
+
+        audioContext = new AudioContext();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        const source = audioContext.createMediaStreamSource(micStream);
+        source.connect(analyser);
+
+        vadActive = true;
+        isSpeaking = false;
+        micBtn.classList.add("listening");
+        vadLoop();
+      } catch (e) {
+        addError("Mic access denied: " + e.message);
+      }
+    }
+
+    function stopMic() {
+      vadActive = false;
+      cancelAnimationFrame(vadRAF);
+
+      if (isSpeaking) {
+        finishRecording();
+      }
+
+      if (micStream) {
+        micStream.getTracks().forEach(t => t.stop());
+        micStream = null;
+      }
+      if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+      }
+
+      micBtn.classList.remove("listening", "speaking", "muted");
+      volumeFill.style.width = "0%";
+    }
+
+    function pauseVAD() {
+      vadActive = false;
+      cancelAnimationFrame(vadRAF);
+      if (isSpeaking) {
+        cancelRecording();
+        isSpeaking = false;
+        silenceStart = 0;
+        micBtn.classList.remove("speaking");
+      }
+      volumeFill.style.width = "0%";
+    }
+
+    function resumeVAD() {
+      if (!micStream || !analyser) return;
+      vadActive = true;
+      isSpeaking = false;
+      micBtn.classList.remove("muted");
+      micBtn.classList.add("listening");
+      vadLoop();
+    }
+
+    function vadLoop() {
+      if (!vadActive) return;
+
+      const dataArray = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(dataArray);
+
+      let rms = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        rms += dataArray[i] * dataArray[i];
+      }
+      rms = Math.sqrt(rms / dataArray.length);
+
+      const pct = Math.min(rms / 0.1, 1) * 100;
+      volumeFill.style.width = pct + "%";
+
+      const now = Date.now();
+
+      if (rms > VAD_THRESHOLD) {
+        if (!isSpeaking) {
+          isSpeaking = true;
+          speechStart = now;
+          startRecording();
+          micBtn.classList.add("speaking");
+        }
+        silenceStart = 0;
+      } else if (isSpeaking) {
+        if (silenceStart === 0) {
+          silenceStart = now;
+        } else if (now - silenceStart > SILENCE_TIMEOUT_MS) {
+          const duration = now - speechStart;
+          if (duration > MIN_SPEECH_MS) {
+            finishRecording();
+          } else {
+            cancelRecording();
+          }
+          isSpeaking = false;
+          silenceStart = 0;
+          micBtn.classList.remove("speaking");
+        }
+      }
+
+      vadRAF = requestAnimationFrame(vadLoop);
+    }
+
+    function startRecording() {
+      chunks = [];
+      mediaRecorder = new MediaRecorder(micStream, {
+        mimeType: "audio/webm;codecs=opus",
+      });
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      mediaRecorder.start(100);
+    }
+
+    function finishRecording() {
+      if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        if (blob.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(blob);
+        }
+        chunks = [];
+      };
+      mediaRecorder.stop();
+    }
+
+    function cancelRecording() {
+      if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+      mediaRecorder.onstop = () => { chunks = []; };
+      mediaRecorder.stop();
+    }
+
+    // --- Init ---
+    connectWebSocket();
+  </script>
+</body>
+</html>
