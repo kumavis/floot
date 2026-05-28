@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const VAD_THRESHOLD = 0.015;
+// Higher threshold while TTS is playing so the speaker's own audio leaking
+// back into the mic (after echo cancellation) doesn't false-trigger barge-in.
+const BARGE_IN_THRESHOLD = 0.05;
 const SILENCE_TIMEOUT_MS = 1500;
 const MIN_SPEECH_MS = 400;
 
@@ -18,6 +21,7 @@ export interface VADApi {
 
 interface Options {
   onUtterance: (blob: Blob) => void;
+  onBargeIn?: () => void;
   enabled: boolean;
 }
 
@@ -36,10 +40,12 @@ export function useVAD(options: Options): VADApi {
   const silenceStartRef = useRef(0);
   const speechStartRef = useRef(0);
   const activeRef = useRef(false);
-  const wasListeningBeforePauseRef = useRef(false);
+  const bargeInRef = useRef(false);
 
   const onUtteranceRef = useRef(options.onUtterance);
   onUtteranceRef.current = options.onUtterance;
+  const onBargeInRef = useRef(options.onBargeIn);
+  onBargeInRef.current = options.onBargeIn;
 
   const startRecording = useCallback(() => {
     const stream = streamRef.current;
@@ -90,10 +96,15 @@ export function useVAD(options: Options): VADApi {
     setVolume(Math.min(rms / 0.1, 1));
 
     const now = Date.now();
-    if (rms > VAD_THRESHOLD) {
+    const threshold = bargeInRef.current ? BARGE_IN_THRESHOLD : VAD_THRESHOLD;
+    if (rms > threshold) {
       if (!speakingRef.current) {
         speakingRef.current = true;
         speechStartRef.current = now;
+        if (bargeInRef.current) {
+          bargeInRef.current = false;
+          onBargeInRef.current?.();
+        }
         startRecording();
         setMode("speaking");
       }
@@ -119,6 +130,7 @@ export function useVAD(options: Options): VADApi {
 
   const teardown = useCallback(() => {
     activeRef.current = false;
+    bargeInRef.current = false;
     cancelAnimationFrame(rafRef.current);
     if (speakingRef.current) {
       cancelRecording();
@@ -145,7 +157,12 @@ export function useVAD(options: Options): VADApi {
       try {
         setError(null);
         const stream = await navigator.mediaDevices.getUserMedia({
-          audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+          audio: {
+            ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         });
         streamRef.current = stream;
         const ctx = new AudioContext();
@@ -175,29 +192,25 @@ export function useVAD(options: Options): VADApi {
     setMode("off");
   }, [finishRecording, teardown]);
 
+  // pause() does not stop the analyzer — it switches to barge-in detection so
+  // that speech onset during TTS playback can interrupt the assistant.
   const pause = useCallback(() => {
     if (!activeRef.current) return;
-    wasListeningBeforePauseRef.current = true;
-    activeRef.current = false;
-    cancelAnimationFrame(rafRef.current);
+    bargeInRef.current = true;
     if (speakingRef.current) {
       cancelRecording();
       speakingRef.current = false;
       silenceStartRef.current = 0;
     }
-    setVolume(0);
     setMode("muted");
   }, [cancelRecording]);
 
   const resume = useCallback(() => {
-    if (!streamRef.current || !analyserRef.current) return;
-    if (!wasListeningBeforePauseRef.current) return;
-    wasListeningBeforePauseRef.current = false;
-    activeRef.current = true;
-    speakingRef.current = false;
-    setMode("listening");
-    rafRef.current = requestAnimationFrame(loop);
-  }, [loop]);
+    if (!activeRef.current) return;
+    if (!bargeInRef.current && mode !== "muted") return;
+    bargeInRef.current = false;
+    if (!speakingRef.current) setMode("listening");
+  }, [mode]);
 
   useEffect(() => {
     if (!options.enabled && mode !== "off") {

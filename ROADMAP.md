@@ -18,9 +18,6 @@ Truncated runs leave files under `os.tmpdir()/floot-shell-logs/` indefinitely. A
 ### Cancellation
 No way to abort an in-flight turn. Add a `message/cancel` WS command that aborts the LLM stream and kills any running tool subprocesses.
 
-### Barge-in
-TTS keeps speaking when the user starts talking. Wire mic VAD to interrupt playback and abort the current turn.
-
 ### Parallel tool calls
 `runAssistantTurn` (`src/server.ts`) executes tool_use blocks sequentially. The Anthropic API can emit multiple tool calls in one turn — run them concurrently.
 

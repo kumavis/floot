@@ -43,9 +43,21 @@ export function App() {
     [detail, sendBinary]
   );
 
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
+
+  const handleBargeIn = useCallback(() => {
+    tts.stop();
+    const status = detailRef.current?.status;
+    if (status === "streaming" || status === "transcribing") {
+      send({ type: "message/cancel" });
+    }
+  }, [send, tts]);
+
   const vad = useVAD({
     enabled: detail !== null,
     onUtterance: handleUtterance,
+    onBargeIn: handleBargeIn,
   });
 
   const isStreaming =
