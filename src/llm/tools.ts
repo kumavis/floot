@@ -19,7 +19,7 @@ export const FLOOT_TOOLS: Anthropic.Tool[] = [
   {
     name: "run_shell",
     description:
-      "Run a shell command (bash) and return its stdout and stderr. Use for system commands, file listing, git operations, package management, etc.",
+      "Run a shell command (bash) and return its stdout and stderr. Use for system commands, file listing, git operations, package management, etc. Output is capped at ~32KB per stream; when truncated, the full output is written to a temp file and the path is included in the response — use tail/grep/sed on that path to inspect the rest.",
     input_schema: {
       type: "object" as const,
       properties: {

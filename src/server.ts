@@ -3,11 +3,13 @@ import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
 import { writeFile, readFile, unlink, mkdir } from "fs/promises";
-import { execFile, spawn, exec } from "child_process";
+import { createWriteStream } from "fs";
+import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import vm from "vm";
 import { randomUUID } from "crypto";
 import path from "path";
+import os from "os";
 import { fileURLToPath } from "url";
 import {
   SessionStore,
@@ -20,7 +22,6 @@ import { ModelsConfig } from "./config/models.js";
 import { createLLMProvider, type LLMStreamEvent } from "./llm/index.js";
 
 const execFileAsync = promisify(execFile);
-const execAsync = promisify(exec);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,11 +31,15 @@ const CLIENT_DIST_DIR = path.resolve(PROJECT_ROOT, "dist/public");
 const PORT = Number(process.env.PORT) || 3000;
 const WHISPER_MODEL = process.env.WHISPER_MODEL || "base";
 const UPLOADS_DIR = path.resolve(__dirname, "..", "uploads");
+const SHELL_LOG_DIR = path.join(os.tmpdir(), "floot-shell-logs");
+const SHELL_HEAD_BYTES = 32 * 1024;
+const SHELL_TIMEOUT_MS = 30_000;
 const TTS_VOICE = process.env.TTS_VOICE || "Fiona (Enhanced)";
 const MIN_AUDIO_BYTES = 1024;
 const BROADCAST_THROTTLE_MS = 50;
 
 await mkdir(UPLOADS_DIR, { recursive: true });
+await mkdir(SHELL_LOG_DIR, { recursive: true });
 
 const modelsConfig = await ModelsConfig.load();
 
@@ -268,6 +273,114 @@ store.on("sessionDeleted", (sessionId: string) => {
   }
 });
 
+async function runShellCommand(command: string, cwd: string): Promise<string> {
+  const id = randomUUID();
+  const stdoutPath = path.join(SHELL_LOG_DIR, `${id}.stdout.log`);
+  const stderrPath = path.join(SHELL_LOG_DIR, `${id}.stderr.log`);
+
+  const stdoutFile = createWriteStream(stdoutPath);
+  const stderrFile = createWriteStream(stderrPath);
+
+  let stdoutHead: Buffer = Buffer.alloc(0);
+  let stderrHead: Buffer = Buffer.alloc(0);
+  let stdoutTotal = 0;
+  let stderrTotal = 0;
+
+  const appendHead = (head: Buffer, chunk: Buffer): Buffer => {
+    if (head.length >= SHELL_HEAD_BYTES) return head;
+    const need = SHELL_HEAD_BYTES - head.length;
+    const slice = chunk.length <= need ? chunk : chunk.subarray(0, need);
+    return Buffer.concat([head, slice]);
+  };
+
+  const child = spawn(command, {
+    cwd,
+    shell: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdoutTotal += chunk.length;
+    stdoutHead = appendHead(stdoutHead, chunk);
+    stdoutFile.write(chunk);
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrTotal += chunk.length;
+    stderrHead = appendHead(stderrHead, chunk);
+    stderrFile.write(chunk);
+  });
+
+  let timedOut = false;
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGTERM");
+  }, SHELL_TIMEOUT_MS);
+
+  const exit = await new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+    spawnError?: Error;
+  }>((resolve) => {
+    child.on("close", (code, signal) => {
+      clearTimeout(timeoutHandle);
+      resolve({ code, signal });
+    });
+    child.on("error", (spawnError) => {
+      clearTimeout(timeoutHandle);
+      resolve({ code: null, signal: null, spawnError });
+    });
+  });
+
+  await Promise.all([
+    new Promise<void>((resolve) => stdoutFile.end(resolve)),
+    new Promise<void>((resolve) => stderrFile.end(resolve)),
+  ]);
+
+  const stdoutTruncated = stdoutTotal > stdoutHead.length;
+  const stderrTruncated = stderrTotal > stderrHead.length;
+
+  if (!stdoutTruncated) await unlink(stdoutPath).catch(() => {});
+  if (!stderrTruncated) await unlink(stderrPath).catch(() => {});
+
+  const parts: string[] = [];
+
+  if (exit.spawnError) {
+    parts.push(`Error spawning command: ${exit.spawnError.message}`);
+  } else if (timedOut) {
+    parts.push(`Command timed out after ${SHELL_TIMEOUT_MS}ms (SIGTERM sent)`);
+  } else if (exit.code !== 0) {
+    parts.push(
+      `Exit code ${exit.code}${exit.signal ? ` (signal ${exit.signal})` : ""}`
+    );
+  }
+
+  const stdoutStr = stdoutHead.toString("utf8").trim();
+  if (stdoutStr) {
+    let block = stdoutStr;
+    if (stdoutTruncated) {
+      const omitted = stdoutTotal - stdoutHead.length;
+      block += `\n\n[stdout truncated: ${omitted} bytes omitted. Full output at ${stdoutPath} — use tail/grep/sed to inspect]`;
+    }
+    parts.push(block);
+  } else if (stdoutTruncated) {
+    parts.push(`[stdout truncated; full output at ${stdoutPath}]`);
+  }
+
+  const stderrStr = stderrHead.toString("utf8").trim();
+  if (stderrStr) {
+    let block = "STDERR:\n" + stderrStr;
+    if (stderrTruncated) {
+      const omitted = stderrTotal - stderrHead.length;
+      block += `\n\n[stderr truncated: ${omitted} bytes omitted. Full output at ${stderrPath} — use tail/grep/sed to inspect]`;
+    }
+    parts.push(block);
+  } else if (stderrTruncated) {
+    parts.push(`[stderr truncated; full output at ${stderrPath}]`);
+  }
+
+  return parts.join("\n\n") || "(no output)";
+}
+
 async function executeTool(
   name: string,
   input: Record<string, unknown>
@@ -313,26 +426,9 @@ async function executeTool(
   }
 
   if (name === "run_shell") {
-    try {
-      const command = String(input.command ?? "");
-      const cwd = input.cwd ? String(input.cwd) : PROJECT_ROOT;
-      const { stdout, stderr } = await execAsync(command, {
-        cwd,
-        timeout: 30_000,
-        maxBuffer: 1024 * 1024,
-      });
-      let result = "";
-      if (stdout.trim()) result += stdout.trim();
-      if (stderr.trim())
-        result += (result ? "\n\nSTDERR:\n" : "STDERR:\n") + stderr.trim();
-      return result || "(no output)";
-    } catch (err: unknown) {
-      const e = err as { stdout?: string; stderr?: string; message: string };
-      let result = `Exit code error: ${e.message}`;
-      if (e.stdout) result += "\n\nSTDOUT:\n" + e.stdout;
-      if (e.stderr) result += "\n\nSTDERR:\n" + e.stderr;
-      return result;
-    }
+    const command = String(input.command ?? "");
+    const cwd = input.cwd ? String(input.cwd) : PROJECT_ROOT;
+    return runShellCommand(command, cwd);
   }
 
   return `Unknown tool: ${name}`;
