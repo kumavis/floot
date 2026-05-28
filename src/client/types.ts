@@ -15,10 +15,18 @@ export interface UiMessage {
   createdAt: number;
 }
 
+export interface ModelSummary {
+  id: string;
+  label: string;
+  provider: string;
+}
+
 export interface SessionSummary {
   id: string;
   title: string;
   status: SessionStatus;
+  modelId: string;
+  modelLabel: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -29,14 +37,20 @@ export interface SessionDetail extends SessionSummary {
 }
 
 export type ServerEvent =
-  | { type: "state/init"; sessions: SessionSummary[]; detail: SessionDetail | null }
+  | {
+      type: "state/init";
+      models: ModelSummary[];
+      defaultModelId: string;
+      sessions: SessionSummary[];
+      detail: SessionDetail | null;
+    }
   | { type: "state/sessions_updated"; sessions: SessionSummary[] }
   | { type: "state/session_updated"; detail: SessionDetail | null }
   | { type: "state/error"; message: string };
 
 export type ClientCommand =
   | { type: "session/list" }
-  | { type: "session/create" }
+  | { type: "session/create"; modelId?: string }
   | { type: "session/select"; sessionId: string }
   | { type: "session/delete"; sessionId: string }
   | { type: "message/send_text"; content: string };

@@ -10,8 +10,17 @@ import { useVAD } from "./hooks/useVAD";
 import type { SessionDetail } from "./types";
 
 export function App() {
-  const { connected, sessions, detail, error, send, sendBinary, clearError } =
-    useFlootSocket();
+  const {
+    connected,
+    models,
+    defaultModelId,
+    sessions,
+    detail,
+    error,
+    send,
+    sendBinary,
+    clearError,
+  } = useFlootSocket();
 
   const [deviceId, setDeviceId] = useState<string>("");
   const autoplayedRef = useRef<Set<string>>(new Set());
@@ -95,9 +104,12 @@ export function App() {
     return () => clearTimeout(timer);
   }, [error, clearError]);
 
-  const handleCreate = useCallback(() => {
-    send({ type: "session/create" });
-  }, [send]);
+  const handleCreate = useCallback(
+    (modelId: string) => {
+      send({ type: "session/create", modelId });
+    },
+    [send]
+  );
 
   const handleSelect = useCallback(
     (id: string) => {
@@ -149,6 +161,8 @@ export function App() {
     <div className="app">
       <Sidebar
         sessions={sessions}
+        models={models}
+        defaultModelId={defaultModelId}
         activeId={detail?.id ?? null}
         onCreate={handleCreate}
         onSelect={handleSelect}
@@ -156,9 +170,14 @@ export function App() {
       />
       <main className="main">
         <div className="header">
-          <span className={`header-title ${!detail ? "empty" : ""}`}>
-            {detail?.title || "Floot"}
-          </span>
+          <div className="header-meta">
+            <span className={`header-title ${!detail ? "empty" : ""}`}>
+              {detail?.title || "Floot"}
+            </span>
+            {detail ? (
+              <span className="header-model">{detail.modelLabel}</span>
+            ) : null}
+          </div>
           <div className="header-controls">
             <MicSelect value={deviceId} onChange={setDeviceId} />
           </div>

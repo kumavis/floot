@@ -63,14 +63,30 @@ button {
   padding: 0.75rem;
   border-bottom: 1px solid var(--border);
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 0.5rem;
+}
+
+.sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.model-select {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.45rem;
+  font-size: 0.75rem;
 }
 
 .sidebar-title {
   font-size: 0.95rem;
   font-weight: 600;
-  flex: 1;
 }
 
 .new-session-btn {
@@ -169,10 +185,25 @@ button {
 
 .session-title {
   font-size: 0.85rem;
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.session-model {
+  font-size: 0.68rem;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .session-delete-btn {
@@ -221,10 +252,25 @@ button {
   gap: 0.5rem;
 }
 
+.header-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
 .header-title {
   font-size: 0.95rem;
   font-weight: 600;
-  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-model {
+  font-size: 0.72rem;
+  color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

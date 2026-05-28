@@ -9,7 +9,6 @@ import vm from "vm";
 import { randomUUID } from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
-import Anthropic from "@anthropic-ai/sdk";
 import {
   SessionStore,
   type ContentBlock,
@@ -17,13 +16,11 @@ import {
   type SessionSummary,
 } from "./state/session-store.js";
 import { SayTTSProvider, type SayTTSStream } from "./tts/index.js";
+import { ModelsConfig } from "./config/models.js";
+import { createLLMProvider, type LLMStreamEvent } from "./llm/index.js";
 
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
-
-const anthropic = new Anthropic({
-  apiKey: process.env.LLM_AUTH_TOKEN,
-});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +36,8 @@ const BROADCAST_THROTTLE_MS = 50;
 
 await mkdir(UPLOADS_DIR, { recursive: true });
 
+const modelsConfig = await ModelsConfig.load();
+
 async function ensureUploadsDir() {
   await mkdir(UPLOADS_DIR, { recursive: true });
 }
@@ -49,18 +48,14 @@ app.use(express.static(CLIENT_DIST_DIR));
 const store = new SessionStore();
 const ttsProvider = new SayTTSProvider(UPLOADS_DIR, TTS_VOICE);
 
-// Track active TTS streams per message so we can stream audio for in-progress responses
 interface ActiveTTSState {
   stream: SayTTSStream;
   audioChunks: Buffer[];
   done: boolean;
-  waiters: Array<() => void>; // Resolve functions for pending waitForChunk calls
+  waiters: Array<() => void>;
 }
 const activeTTSByMessage = new Map<string, ActiveTTSState>();
 
-// ----- TTS endpoint -----
-// This endpoint streams audio for a message. If the message is still being generated,
-// it will wait for audio chunks as they become available.
 app.get("/api/tts/:id", async (req, res) => {
   await ensureUploadsDir();
 
@@ -71,7 +66,6 @@ app.get("/api/tts/:id", async (req, res) => {
     return;
   }
 
-  // Check if there's an active TTS stream for this message (still generating)
   const activeState = activeTTSByMessage.get(messageId);
 
   res.setHeader("Content-Type", "audio/mpeg");
@@ -79,9 +73,8 @@ app.get("/api/tts/:id", async (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
 
   if (activeState) {
-    // Stream audio chunks as they become available
     let chunkIndex = 0;
-    
+
     const sendAvailableChunks = () => {
       while (chunkIndex < activeState.audioChunks.length) {
         res.write(activeState.audioChunks[chunkIndex]);
@@ -91,34 +84,28 @@ app.get("/api/tts/:id", async (req, res) => {
 
     const waitForNextChunk = (): Promise<void> => {
       return new Promise((resolve) => {
-        // If there are already chunks available or done, resolve immediately
         if (chunkIndex < activeState.audioChunks.length || activeState.done) {
           resolve();
           return;
         }
-        // Otherwise wait for a signal
         activeState.waiters.push(resolve);
       });
     };
 
-    // Stream loop
     while (!req.socket.destroyed) {
       sendAvailableChunks();
-      
+
       if (activeState.done && chunkIndex >= activeState.audioChunks.length) {
-        // All done
         break;
       }
-      
-      // Wait for more chunks or completion
+
       await waitForNextChunk();
     }
-    
+
     res.end();
     return;
   }
 
-  // No active stream - message is complete, generate all audio at once (existing behavior)
   const tmpId = randomUUID();
   const aiffPath = path.join(UPLOADS_DIR, `${tmpId}.aiff`);
 
@@ -177,7 +164,6 @@ app.get("/api/tts/:id", async (req, res) => {
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
-// ----- Per-connection state -----
 interface Connection {
   ws: WebSocket;
   selectedSessionId: string | null;
@@ -205,6 +191,8 @@ function buildInit(conn: Connection) {
     : null;
   return {
     type: "state/init",
+    models: modelsConfig.getModelsCatalog(),
+    defaultModelId: modelsConfig.getDefaultModelId(),
     sessions: store.listSummaries(),
     detail,
   };
@@ -240,7 +228,6 @@ function sendError(conn: Connection, message: string): void {
   sendJson(conn.ws, { type: "state/error", message });
 }
 
-// ----- Throttled broadcasting from store events -----
 let sessionsListDirty = false;
 const dirtySessionIds = new Set<string>();
 let flushScheduled = false;
@@ -281,55 +268,14 @@ store.on("sessionDeleted", (sessionId: string) => {
   }
 });
 
-// ----- LLM + tools -----
-const SYSTEM_PROMPT =
-  process.env.SYSTEM_PROMPT ||
-  "You are a helpful voice assistant. The user is speaking to you via voice transcription. Be concise, warm, and conversational. Keep responses short unless asked for detail. You have access to tools for running JavaScript and shell commands on the user's machine.";
-
-const TOOLS: Anthropic.Tool[] = [
-  {
-    name: "eval_js",
-    description:
-      "Evaluate JavaScript code in a full Node.js environment. Has access to all Node.js built-in modules (fs, path, http, etc). Returns the result of the last expression, or stdout output. Use for calculations, file operations, data processing, etc.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        code: {
-          type: "string",
-          description: "The JavaScript code to evaluate",
-        },
-      },
-      required: ["code"],
-    },
-  },
-  {
-    name: "run_shell",
-    description:
-      "Run a shell command (bash) and return its stdout and stderr. Use for system commands, file listing, git operations, package management, etc.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        command: {
-          type: "string",
-          description: "The shell command to run",
-        },
-        cwd: {
-          type: "string",
-          description: "Working directory (optional, defaults to project root)",
-        },
-      },
-      required: ["command"],
-    },
-  },
-];
-
 async function executeTool(
   name: string,
-  input: Record<string, string>
+  input: Record<string, unknown>
 ): Promise<string> {
   if (name === "eval_js") {
     try {
-      const script = new vm.Script(input.code, { filename: "eval.js" });
+      const code = String(input.code ?? "");
+      const script = new vm.Script(code, { filename: "eval.js" });
       const output: string[] = [];
       const context = vm.createContext({
         ...globalThis,
@@ -368,8 +314,9 @@ async function executeTool(
 
   if (name === "run_shell") {
     try {
-      const cwd = input.cwd || PROJECT_ROOT;
-      const { stdout, stderr } = await execAsync(input.command, {
+      const command = String(input.command ?? "");
+      const cwd = input.cwd ? String(input.cwd) : PROJECT_ROOT;
+      const { stdout, stderr } = await execAsync(command, {
         cwd,
         timeout: 30_000,
         maxBuffer: 1024 * 1024,
@@ -418,7 +365,6 @@ async function transcribe(audioPath: string): Promise<string> {
   }
 }
 
-// ----- TTS streaming helpers -----
 function startTTSForMessage(messageId: string): ActiveTTSState {
   const stream = ttsProvider.createStream();
   const state: ActiveTTSState = {
@@ -434,13 +380,10 @@ function startTTSForMessage(messageId: string): ActiveTTSState {
     for (const resolve of toNotify) resolve();
   };
 
-  // Cleanup is idempotent: both `done` and `error` may fire for the same
-  // stream, but the map entry must only be scheduled for deletion once.
   let cleanupScheduled = false;
   const scheduleCleanup = () => {
     if (cleanupScheduled) return;
     cleanupScheduled = true;
-    // Delay so late-arriving HTTP requests can still drain audioChunks.
     setTimeout(() => {
       activeTTSByMessage.delete(messageId);
     }, 30000);
@@ -468,93 +411,137 @@ function startTTSForMessage(messageId: string): ActiveTTSState {
   return state;
 }
 
-// ----- Orchestration -----
+async function consumeStreamEvent(
+  sessionId: string,
+  event: LLMStreamEvent,
+  state: {
+    contentBlocks: ContentBlock[];
+    currentAssistantMsgId: string | null;
+    currentTTSState: ActiveTTSState | null;
+    currentText: string;
+    stopReason: "end_turn" | "tool_use";
+  }
+): Promise<void> {
+  switch (event.type) {
+    case "provider_session":
+      store.setProviderSessionId(sessionId, event.sessionId);
+      break;
+    case "text_start": {
+      const msg = store.beginAssistantText(sessionId);
+      state.currentAssistantMsgId = msg?.id ?? null;
+      state.currentText = "";
+      if (state.currentAssistantMsgId) {
+        state.currentTTSState = startTTSForMessage(state.currentAssistantMsgId);
+      }
+      break;
+    }
+    case "text_delta":
+      if (state.currentAssistantMsgId) {
+        state.currentText += event.text;
+        store.appendAssistantDelta(
+          sessionId,
+          state.currentAssistantMsgId,
+          event.text
+        );
+        if (state.currentTTSState) {
+          state.currentTTSState.stream.write(event.text);
+        }
+      }
+      break;
+    case "text_end":
+      if (state.currentText) {
+        state.contentBlocks.push({ type: "text", text: state.currentText });
+        state.currentText = "";
+      }
+      if (state.currentTTSState) {
+        state.currentTTSState.stream.end();
+        state.currentTTSState = null;
+      }
+      state.currentAssistantMsgId = null;
+      break;
+    case "tool_call":
+      state.contentBlocks.push({
+        type: "tool_use",
+        id: event.id,
+        name: event.name,
+        input: event.input,
+      });
+      store.appendToolCall(sessionId, event.name, event.input);
+      break;
+    case "turn_end":
+      state.stopReason = event.stopReason;
+      break;
+  }
+}
+
 async function runAssistantTurn(sessionId: string): Promise<void> {
   store.setStatus(sessionId, "streaming");
-  const model = process.env.LLM_MODEL || "claude-opus-4-5-20251101";
+
+  const modelId = store.getModelId(sessionId);
+  if (!modelId) return;
+
+  const modelConfig = modelsConfig.getModelConfig(modelId);
+  const provider = createLLMProvider(modelConfig, PROJECT_ROOT);
+  const systemPrompt = modelsConfig.getSystemPrompt(modelId);
 
   try {
     while (true) {
       const history = store.getHistory(sessionId);
       if (!history) return;
 
-      const stream = anthropic.messages.stream({
-        model,
-        max_tokens: 64000,
-        system: SYSTEM_PROMPT,
-        tools: TOOLS,
+      const latestUserMessage = store.getLatestUserMessage(sessionId);
+      if (!latestUserMessage) return;
+
+      const stream = provider.streamTurn({
+        system: systemPrompt,
         messages: history,
+        latestUserMessage,
+        providerSessionId: store.getProviderSessionId(sessionId),
       });
 
-      const contentBlocks: ContentBlock[] = [];
-      let currentAssistantMsgId: string | null = null;
-      let currentTTSState: ActiveTTSState | null = null;
+      const streamState = {
+        contentBlocks: [] as ContentBlock[],
+        currentAssistantMsgId: null as string | null,
+        currentTTSState: null as ActiveTTSState | null,
+        currentText: "",
+        stopReason: "end_turn" as "end_turn" | "tool_use",
+      };
 
       for await (const event of stream) {
-        switch (event.type) {
-          case "content_block_start":
-            if (event.content_block.type === "text") {
-              const msg = store.beginAssistantText(sessionId);
-              currentAssistantMsgId = msg?.id ?? null;
-              // Start TTS streaming for this message
-              if (currentAssistantMsgId) {
-                currentTTSState = startTTSForMessage(currentAssistantMsgId);
-              }
-            }
-            break;
-
-          case "content_block_delta":
-            if (event.delta.type === "text_delta" && currentAssistantMsgId) {
-              store.appendAssistantDelta(
-                sessionId,
-                currentAssistantMsgId,
-                event.delta.text
-              );
-              // Feed text to the TTS stream
-              if (currentTTSState) {
-                currentTTSState.stream.write(event.delta.text);
-              }
-            }
-            break;
-
-          case "content_block_stop": {
-            const finalMsg = await stream.finalMessage();
-            const block = finalMsg.content[event.index];
-            if (block.type === "text") {
-              contentBlocks.push(block);
-              // End the TTS stream for this text block
-              if (currentTTSState) {
-                currentTTSState.stream.end();
-                currentTTSState = null;
-              }
-              currentAssistantMsgId = null;
-            } else if (block.type === "tool_use") {
-              contentBlocks.push(block);
-              // Input is streamed via input_json_delta; only complete at block stop.
-              store.appendToolCall(sessionId, block.name, block.input ?? {});
-            }
-            break;
-          }
-        }
+        await consumeStreamEvent(sessionId, event, streamState);
       }
 
-      store.pushAssistantHistoryBlocks(sessionId, contentBlocks);
+      if (streamState.currentText) {
+        streamState.contentBlocks.push({
+          type: "text",
+          text: streamState.currentText,
+        });
+        streamState.currentText = "";
+      }
+      if (streamState.currentTTSState) {
+        streamState.currentTTSState.stream.end();
+        streamState.currentTTSState = null;
+      }
 
-      const finalMessage = await stream.finalMessage();
-      if (finalMessage.stop_reason !== "tool_use") {
+      if (streamState.contentBlocks.length > 0) {
+        store.pushAssistantHistoryBlocks(sessionId, streamState.contentBlocks);
+      }
+
+      if (
+        !provider.supportsFlootTools ||
+        streamState.stopReason !== "tool_use"
+      ) {
         break;
       }
 
-      const toolUseBlocks = contentBlocks.filter(
-        (b): b is Anthropic.ToolUseBlockParam => b.type === "tool_use"
+      const toolUseBlocks = streamState.contentBlocks.filter(
+        (block): block is Extract<ContentBlock, { type: "tool_use" }> =>
+          block.type === "tool_use"
       );
       const toolResults: ContentBlock[] = [];
 
       for (const toolUse of toolUseBlocks) {
-        const result = await executeTool(
-          toolUse.name,
-          toolUse.input as Record<string, string>
-        );
+        const result = await executeTool(toolUse.name, toolUse.input);
         store.appendToolResult(sessionId, toolUse.name, result);
         toolResults.push({
           type: "tool_result",
@@ -641,7 +628,6 @@ async function handleAudioMessage(
   await runAssistantTurn(sessionId);
 }
 
-// ----- WS command dispatcher -----
 wss.on("connection", (ws) => {
   const conn: Connection = { ws, selectedSessionId: null };
   connections.add(conn);
@@ -669,7 +655,18 @@ wss.on("connection", (ws) => {
           break;
 
         case "session/create": {
-          const detail = store.createSession();
+          const requestedModelId =
+            typeof msg.modelId === "string" && msg.modelId.trim()
+              ? msg.modelId.trim()
+              : modelsConfig.getDefaultModelId();
+          if (!modelsConfig.hasModel(requestedModelId)) {
+            sendError(conn, `Unknown model: ${requestedModelId}`);
+            break;
+          }
+          const detail = store.createSession(
+            requestedModelId,
+            modelsConfig.getModelLabel(requestedModelId)
+          );
           conn.selectedSessionId = detail.id;
           sendSessionUpdated(conn);
           break;

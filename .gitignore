@@ -1,4 +1,5 @@
 .env
+models.yml
 node_modules
 uploads
 dist

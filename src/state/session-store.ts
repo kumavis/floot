@@ -1,15 +1,14 @@
 import { EventEmitter } from "events";
 import { randomUUID } from "crypto";
-import type Anthropic from "@anthropic-ai/sdk";
 
 export type ContentBlock =
-  | Anthropic.TextBlockParam
-  | Anthropic.ToolUseBlockParam
-  | Anthropic.ToolResultBlockParam;
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_result"; tool_use_id: string; content: string };
 
 export type SessionStatus = "idle" | "transcribing" | "streaming" | "error";
 
-export interface AnthropicMessage {
+export interface ChatMessage {
   role: "user" | "assistant";
   content: string | ContentBlock[];
 }
@@ -33,6 +32,8 @@ export interface SessionSummary {
   id: string;
   title: string;
   status: SessionStatus;
+  modelId: string;
+  modelLabel: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -47,9 +48,12 @@ interface SessionRecord {
   title: string;
   status: SessionStatus;
   lastError: string | null;
+  modelId: string;
+  modelLabel: string;
+  providerSessionId: string | null;
   createdAt: number;
   updatedAt: number;
-  history: AnthropicMessage[];
+  history: ChatMessage[];
   uiMessages: UiMessage[];
 }
 
@@ -58,13 +62,16 @@ const DEFAULT_TITLE = "New chat";
 export class SessionStore extends EventEmitter {
   private sessions = new Map<string, SessionRecord>();
 
-  createSession(): SessionDetail {
+  createSession(modelId: string, modelLabel: string): SessionDetail {
     const now = Date.now();
     const record: SessionRecord = {
       id: randomUUID(),
       title: DEFAULT_TITLE,
       status: "idle",
       lastError: null,
+      modelId,
+      modelLabel,
+      providerSessionId: null,
       createdAt: now,
       updatedAt: now,
       history: [],
@@ -99,8 +106,40 @@ export class SessionStore extends EventEmitter {
     return this.detailOf(record);
   }
 
-  getHistory(id: string): AnthropicMessage[] | undefined {
+  getHistory(id: string): ChatMessage[] | undefined {
     return this.sessions.get(id)?.history;
+  }
+
+  getModelId(id: string): string | undefined {
+    return this.sessions.get(id)?.modelId;
+  }
+
+  getProviderSessionId(id: string): string | undefined {
+    return this.sessions.get(id)?.providerSessionId ?? undefined;
+  }
+
+  setProviderSessionId(id: string, providerSessionId: string): void {
+    const record = this.sessions.get(id);
+    if (!record) return;
+    record.providerSessionId = providerSessionId;
+    this.touch(record);
+  }
+
+  getLatestUserMessage(id: string): string | undefined {
+    const record = this.sessions.get(id);
+    if (!record) return undefined;
+    for (let i = record.history.length - 1; i >= 0; i--) {
+      const message = record.history[i];
+      if (message.role !== "user") continue;
+      if (typeof message.content === "string") {
+        return message.content;
+      }
+      const textBlock = message.content.find((block) => block.type === "text");
+      if (textBlock && textBlock.type === "text") {
+        return textBlock.text;
+      }
+    }
+    return undefined;
   }
 
   setStatus(
@@ -260,6 +299,8 @@ export class SessionStore extends EventEmitter {
       id: record.id,
       title: record.title,
       status: record.status,
+      modelId: record.modelId,
+      modelLabel: record.modelLabel,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     };

@@ -1,0 +1,30 @@
+system_prompt: |
+  You are a helpful voice assistant named "Floot". The user is speaking to you via voice transcription.
+  Be concise, warm, and conversational. Keep responses short unless asked for detail.
+  You have access to tools for running JavaScript and shell commands on the user's machine.
+
+models:
+  llama-local:
+    label: Llama 3.1 (local)
+    provider: ollama
+    model: llama3.1
+    host: http://localhost:11434
+    options:
+      num_ctx: 32768
+
+  claude-code:
+    label: Claude Sonnet (CLI)
+    provider: claude-cli
+    # Uses your authenticated `claude` CLI account — no auth_token needed
+    model: claude-sonnet-4-6
+    binary: claude
+    max_turns: 10
+    permission_mode: bypassPermissions
+
+  claude-sonnet:
+    label: Claude Sonnet
+    provider: anthropic
+    model: claude-sonnet-4-6
+    host: https://api.anthropic.com
+    auth_token: ${ANTHROPIC_API_KEY}
+    max_tokens: 64000

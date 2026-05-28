@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ClientCommand,
+  ModelSummary,
   ServerEvent,
   SessionDetail,
   SessionSummary,
@@ -8,6 +9,8 @@ import type {
 
 export interface WebSocketState {
   connected: boolean;
+  models: ModelSummary[];
+  defaultModelId: string;
   sessions: SessionSummary[];
   detail: SessionDetail | null;
   error: string | null;
@@ -24,6 +27,8 @@ const RECONNECT_DELAY_MS = 2000;
 export function useFlootSocket(): WebSocketApi {
   const [state, setState] = useState<WebSocketState>({
     connected: false,
+    models: [],
+    defaultModelId: "",
     sessions: [],
     detail: null,
     error: null,
@@ -120,6 +125,8 @@ function applyEvent(prev: WebSocketState, event: ServerEvent): WebSocketState {
     case "state/init":
       return {
         ...prev,
+        models: event.models,
+        defaultModelId: event.defaultModelId,
         sessions: event.sessions,
         detail: event.detail,
         error: null,
