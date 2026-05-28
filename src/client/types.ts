@@ -53,4 +53,5 @@ export type ClientCommand =
   | { type: "session/create"; modelId?: string }
   | { type: "session/select"; sessionId: string }
   | { type: "session/delete"; sessionId: string }
-  | { type: "message/send_text"; content: string };
+  | { type: "message/send_text"; content: string }
+  | { type: "message/cancel" };

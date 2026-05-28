@@ -43,4 +43,79 @@ describe("SayTTSStream", () => {
       `Would you like more specific information or help with something else?`,
     ]);
   });
+
+  it("abort drops queued sentences and stops further synthesis", async () => {
+    const stream = new SayTTSStream("/tmp", "Fiona (Enhanced)");
+    const synthesized: string[] = [];
+    let releaseFirst: (() => void) | null = null;
+
+    vi.spyOn(
+      stream as unknown as { synthesize: (text: string) => Promise<Buffer> },
+      "synthesize"
+    ).mockImplementation(async (text: string) => {
+      synthesized.push(text);
+      if (synthesized.length === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+      return Buffer.alloc(0);
+    });
+
+    const done = new Promise<void>((resolve) => stream.once("done", resolve));
+
+    stream.write("Sentence one. Sentence two. Sentence three.");
+    stream.end();
+
+    // Wait until the first synthesize call has been made (and is blocked).
+    while (!releaseFirst) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    stream.abort();
+    (releaseFirst as () => void)();
+
+    await done;
+
+    // Only the first sentence is in flight when abort fires; the rest of
+    // the queue is dropped without being synthesized.
+    expect(synthesized).toEqual(["Sentence one."]);
+  });
+
+  it("abort after end-of-stream is a no-op for already-finished work", async () => {
+    const stream = new SayTTSStream("/tmp", "Fiona (Enhanced)");
+
+    vi.spyOn(
+      stream as unknown as { synthesize: (text: string) => Promise<Buffer> },
+      "synthesize"
+    ).mockImplementation(async () => Buffer.alloc(0));
+
+    let doneCount = 0;
+    stream.on("done", () => doneCount++);
+
+    stream.write("Hello.");
+    stream.end();
+    await new Promise<void>((resolve) =>
+      stream.once("done", () => resolve())
+    );
+
+    stream.abort();
+    // abort after natural completion shouldn't emit a second `done`
+    expect(doneCount).toBe(1);
+  });
+
+  it("write/end after abort are no-ops", async () => {
+    const stream = new SayTTSStream("/tmp", "Fiona (Enhanced)");
+    const synthesizeSpy = vi.spyOn(
+      stream as unknown as { synthesize: (text: string) => Promise<Buffer> },
+      "synthesize"
+    ).mockResolvedValue(Buffer.alloc(0));
+
+    stream.abort();
+    stream.write("Should not synthesize.");
+    stream.end();
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(synthesizeSpy).not.toHaveBeenCalled();
+  });
 });

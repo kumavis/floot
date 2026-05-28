@@ -126,6 +126,7 @@ export class OllamaProvider implements LLMProvider {
         stream: true,
         options: this.config.options,
       }),
+      signal: options.signal,
     });
 
     if (!response.ok) {

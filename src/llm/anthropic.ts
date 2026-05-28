@@ -72,13 +72,16 @@ export class AnthropicProvider implements LLMProvider {
       baseURL: this.config.host,
     });
 
-    const stream = client.messages.stream({
-      model: this.config.model,
-      max_tokens: this.config.max_tokens ?? 64000,
-      system: options.system,
-      tools: FLOOT_TOOLS,
-      messages: toAnthropicMessages(options.messages),
-    });
+    const stream = client.messages.stream(
+      {
+        model: this.config.model,
+        max_tokens: this.config.max_tokens ?? 64000,
+        system: options.system,
+        tools: FLOOT_TOOLS,
+        messages: toAnthropicMessages(options.messages),
+      },
+      { signal: options.signal }
+    );
 
     for await (const event of stream) {
       switch (event.type) {

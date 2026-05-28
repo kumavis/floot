@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { spawn } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 import { unlink } from "fs/promises";
 import { randomUUID } from "crypto";
 import path from "path";
@@ -20,6 +20,14 @@ export class SayTTSStream extends EventEmitter implements TTSStream {
   private uploadsDir: string;
   private voice: string;
   private aborted = false;
+  private doneEmitted = false;
+  private activeChildren = new Set<ChildProcess>();
+
+  private emitDoneOnce(): void {
+    if (this.doneEmitted) return;
+    this.doneEmitted = true;
+    this.emit("done");
+  }
 
   constructor(uploadsDir: string, voice: string) {
     super();
@@ -41,10 +49,15 @@ export class SayTTSStream extends EventEmitter implements TTSStream {
   }
 
   abort(): void {
+    if (this.aborted) return;
     this.aborted = true;
     this.queue = [];
     this.chunker = createSentenceChunkerState();
-    this.emit("done");
+    for (const child of this.activeChildren) {
+      if (!child.killed) child.kill("SIGTERM");
+    }
+    this.activeChildren.clear();
+    this.emitDoneOnce();
   }
 
   private async processQueue(): Promise<void> {
@@ -73,7 +86,7 @@ export class SayTTSStream extends EventEmitter implements TTSStream {
       this.queue.length === 0 &&
       !this.chunker.buffer.trim()
     ) {
-      this.emit("done");
+      this.emitDoneOnce();
     }
   }
 
@@ -102,10 +115,17 @@ export class SayTTSStream extends EventEmitter implements TTSStream {
         resolve(buf);
       };
 
+      if (this.aborted) {
+        fail(new Error("Aborted"));
+        return;
+      }
+
       const sayProc = spawn("say", ["-v", this.voice, "-o", aiffPath, text]);
+      this.activeChildren.add(sayProc);
 
       sayProc.on("error", fail);
       sayProc.on("close", (code) => {
+        this.activeChildren.delete(sayProc);
         if (settled) return;
 
         if (this.aborted) {
@@ -134,11 +154,17 @@ export class SayTTSStream extends EventEmitter implements TTSStream {
           ],
           { stdio: ["ignore", "pipe", "ignore"] }
         );
+        this.activeChildren.add(ffmpeg);
 
         ffmpeg.stdout.on("data", (chunk) => chunks.push(chunk));
         ffmpeg.on("error", fail);
         ffmpeg.on("close", (ffmpegCode) => {
+          this.activeChildren.delete(ffmpeg);
           if (settled) return;
+          if (this.aborted) {
+            fail(new Error("Aborted"));
+            return;
+          }
           if (ffmpegCode === 0) {
             succeed(Buffer.concat(chunks));
           } else {

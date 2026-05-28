@@ -60,6 +60,7 @@ interface ActiveTTSState {
   waiters: Array<() => void>;
 }
 const activeTTSByMessage = new Map<string, ActiveTTSState>();
+const activeTurnControllers = new Map<string, AbortController>();
 
 app.get("/api/tts/:id", async (req, res) => {
   await ensureUploadsDir();
@@ -273,7 +274,11 @@ store.on("sessionDeleted", (sessionId: string) => {
   }
 });
 
-async function runShellCommand(command: string, cwd: string): Promise<string> {
+async function runShellCommand(
+  command: string,
+  cwd: string,
+  signal?: AbortSignal
+): Promise<string> {
   const id = randomUUID();
   const stdoutPath = path.join(SHELL_LOG_DIR, `${id}.stdout.log`);
   const stderrPath = path.join(SHELL_LOG_DIR, `${id}.stderr.log`);
@@ -311,10 +316,23 @@ async function runShellCommand(command: string, cwd: string): Promise<string> {
   });
 
   let timedOut = false;
+  let interrupted = false;
   const timeoutHandle = setTimeout(() => {
     timedOut = true;
     child.kill("SIGTERM");
   }, SHELL_TIMEOUT_MS);
+
+  const onAbort = () => {
+    interrupted = true;
+    if (!child.killed) child.kill("SIGTERM");
+  };
+  if (signal) {
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
 
   const exit = await new Promise<{
     code: number | null;
@@ -330,6 +348,7 @@ async function runShellCommand(command: string, cwd: string): Promise<string> {
       resolve({ code: null, signal: null, spawnError });
     });
   });
+  if (signal) signal.removeEventListener("abort", onAbort);
 
   await Promise.all([
     new Promise<void>((resolve) => stdoutFile.end(resolve)),
@@ -346,6 +365,8 @@ async function runShellCommand(command: string, cwd: string): Promise<string> {
 
   if (exit.spawnError) {
     parts.push(`Error spawning command: ${exit.spawnError.message}`);
+  } else if (interrupted) {
+    parts.push("[interrupted by user before completion]");
   } else if (timedOut) {
     parts.push(`Command timed out after ${SHELL_TIMEOUT_MS}ms (SIGTERM sent)`);
   } else if (exit.code !== 0) {
@@ -383,7 +404,8 @@ async function runShellCommand(command: string, cwd: string): Promise<string> {
 
 async function executeTool(
   name: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  signal?: AbortSignal
 ): Promise<string> {
   if (name === "eval_js") {
     try {
@@ -428,27 +450,34 @@ async function executeTool(
   if (name === "run_shell") {
     const command = String(input.command ?? "");
     const cwd = input.cwd ? String(input.cwd) : PROJECT_ROOT;
-    return runShellCommand(command, cwd);
+    return runShellCommand(command, cwd, signal);
   }
 
   return `Unknown tool: ${name}`;
 }
 
-async function transcribe(audioPath: string): Promise<string> {
+async function transcribe(
+  audioPath: string,
+  signal?: AbortSignal
+): Promise<string> {
   await ensureUploadsDir();
   const baseName = path.basename(audioPath, path.extname(audioPath));
   const txtPath = path.join(UPLOADS_DIR, `${baseName}.txt`);
 
   try {
-    const { stderr } = await execFileAsync("whisper", [
-      audioPath,
-      "--model",
-      WHISPER_MODEL,
-      "--output_format",
-      "txt",
-      "--output_dir",
-      UPLOADS_DIR,
-    ]);
+    const { stderr } = await execFileAsync(
+      "whisper",
+      [
+        audioPath,
+        "--model",
+        WHISPER_MODEL,
+        "--output_format",
+        "txt",
+        "--output_dir",
+        UPLOADS_DIR,
+      ],
+      { signal }
+    );
 
     if (stderr) {
       console.log("[whisper]", stderr);
@@ -570,7 +599,10 @@ async function consumeStreamEvent(
   }
 }
 
-async function runAssistantTurn(sessionId: string): Promise<void> {
+async function runAssistantTurn(
+  sessionId: string,
+  controller: AbortController = new AbortController()
+): Promise<void> {
   store.setStatus(sessionId, "streaming");
 
   const modelId = store.getModelId(sessionId);
@@ -580,8 +612,16 @@ async function runAssistantTurn(sessionId: string): Promise<void> {
   const provider = createLLMProvider(modelConfig, PROJECT_ROOT);
   const systemPrompt = modelsConfig.getSystemPrompt(modelId);
 
+  activeTurnControllers.set(sessionId, controller);
+  const signal = controller.signal;
+
+  let pendingToolUses: Array<{ id: string; name: string }> = [];
+  const pendingToolResults: ContentBlock[] = [];
+
   try {
     while (true) {
+      if (signal.aborted) break;
+
       const history = store.getHistory(sessionId);
       if (!history) return;
 
@@ -593,6 +633,7 @@ async function runAssistantTurn(sessionId: string): Promise<void> {
         messages: history,
         latestUserMessage,
         providerSessionId: store.getProviderSessionId(sessionId),
+        signal,
       });
 
       const streamState = {
@@ -603,20 +644,26 @@ async function runAssistantTurn(sessionId: string): Promise<void> {
         stopReason: "end_turn" as "end_turn" | "tool_use",
       };
 
-      for await (const event of stream) {
-        await consumeStreamEvent(sessionId, event, streamState);
-      }
-
-      if (streamState.currentText) {
-        streamState.contentBlocks.push({
-          type: "text",
-          text: streamState.currentText,
-        });
-        streamState.currentText = "";
-      }
-      if (streamState.currentTTSState) {
-        streamState.currentTTSState.stream.end();
-        streamState.currentTTSState = null;
+      try {
+        for await (const event of stream) {
+          await consumeStreamEvent(sessionId, event, streamState);
+        }
+      } finally {
+        if (streamState.currentText) {
+          streamState.contentBlocks.push({
+            type: "text",
+            text: streamState.currentText,
+          });
+          streamState.currentText = "";
+        }
+        if (streamState.currentTTSState) {
+          if (signal.aborted) {
+            streamState.currentTTSState.stream.abort();
+          } else {
+            streamState.currentTTSState.stream.end();
+          }
+          streamState.currentTTSState = null;
+        }
       }
 
       if (streamState.contentBlocks.length > 0) {
@@ -630,31 +677,70 @@ async function runAssistantTurn(sessionId: string): Promise<void> {
         break;
       }
 
-      const toolUseBlocks = streamState.contentBlocks.filter(
-        (block): block is Extract<ContentBlock, { type: "tool_use" }> =>
-          block.type === "tool_use"
-      );
-      const toolResults: ContentBlock[] = [];
+      pendingToolUses = streamState.contentBlocks
+        .filter(
+          (block): block is Extract<ContentBlock, { type: "tool_use" }> =>
+            block.type === "tool_use"
+        )
+        .map((b) => ({ id: b.id, name: b.name }));
+      pendingToolResults.length = 0;
 
-      for (const toolUse of toolUseBlocks) {
-        const result = await executeTool(toolUse.name, toolUse.input);
+      for (const toolUse of streamState.contentBlocks) {
+        if (toolUse.type !== "tool_use") continue;
+        if (signal.aborted) break;
+        const result = await executeTool(toolUse.name, toolUse.input, signal);
         store.appendToolResult(sessionId, toolUse.name, result);
-        toolResults.push({
+        pendingToolResults.push({
           type: "tool_result",
           tool_use_id: toolUse.id,
           content: result,
         });
+        pendingToolUses = pendingToolUses.filter((p) => p.id !== toolUse.id);
       }
 
-      store.pushUserHistoryBlocks(sessionId, toolResults);
+      if (pendingToolUses.length > 0) {
+        for (const pending of pendingToolUses) {
+          pendingToolResults.push({
+            type: "tool_result",
+            tool_use_id: pending.id,
+            content: "[interrupted by user]",
+          });
+        }
+        pendingToolUses = [];
+      }
+
+      store.pushUserHistoryBlocks(sessionId, pendingToolResults);
+      pendingToolResults.length = 0;
     }
 
-    store.setStatus(sessionId, "idle");
+    if (signal.aborted) {
+      store.appendError(sessionId, "Interrupted by user");
+      store.setStatus(sessionId, "idle");
+    } else {
+      store.setStatus(sessionId, "idle");
+    }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[assistant] error:", message);
-    store.appendError(sessionId, message);
-    store.setStatus(sessionId, "error", message);
+    if (signal.aborted) {
+      if (pendingToolUses.length > 0) {
+        for (const pending of pendingToolUses) {
+          pendingToolResults.push({
+            type: "tool_result",
+            tool_use_id: pending.id,
+            content: "[interrupted by user]",
+          });
+        }
+        store.pushUserHistoryBlocks(sessionId, pendingToolResults);
+      }
+      store.appendError(sessionId, "Interrupted by user");
+      store.setStatus(sessionId, "idle");
+    } else {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[assistant] error:", message);
+      store.appendError(sessionId, message);
+      store.setStatus(sessionId, "error", message);
+    }
+  } finally {
+    activeTurnControllers.delete(sessionId);
   }
 }
 
@@ -694,15 +780,27 @@ async function handleAudioMessage(
 
   store.setStatus(sessionId, "transcribing");
 
+  const controller = new AbortController();
+  activeTurnControllers.set(sessionId, controller);
+
   let transcript = "";
   try {
-    transcript = await transcribe(audioPath);
+    transcript = await transcribe(audioPath, controller.signal);
   } catch (err) {
+    if (controller.signal.aborted) {
+      activeTurnControllers.delete(sessionId);
+      store.appendError(sessionId, "Interrupted by user");
+      store.setStatus(sessionId, "idle");
+      return;
+    }
+
     const msg = err instanceof Error ? err.message : String(err);
     const looksLikeBadAudio =
       msg.includes("Invalid data found when processing input") ||
       msg.includes("EBML header parsing failed") ||
       msg.includes("Failed to load audio");
+
+    activeTurnControllers.delete(sessionId);
 
     if (looksLikeBadAudio) {
       console.warn("[stt] Ignoring invalid audio payload");
@@ -716,12 +814,13 @@ async function handleAudioMessage(
   }
 
   if (!transcript) {
+    activeTurnControllers.delete(sessionId);
     store.setStatus(sessionId, "idle");
     return;
   }
 
   store.appendUserText(sessionId, transcript);
-  await runAssistantTurn(sessionId);
+  await runAssistantTurn(sessionId, controller);
 }
 
 wss.on("connection", (ws) => {
@@ -789,6 +888,17 @@ wss.on("connection", (ws) => {
 
         case "message/send_text": {
           await handleTextMessage(conn, String(msg.content ?? ""));
+          break;
+        }
+
+        case "message/cancel": {
+          const sessionId = conn.selectedSessionId;
+          if (!sessionId) {
+            sendError(conn, "No session selected.");
+            break;
+          }
+          const ctrl = activeTurnControllers.get(sessionId);
+          if (ctrl) ctrl.abort();
           break;
         }
 

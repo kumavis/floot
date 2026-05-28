@@ -1,21 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import type { MicMode } from "../hooks/useVAD";
-import { MicIcon, SendIcon } from "./icons";
+import { MicIcon, SendIcon, StopIcon } from "./icons";
 
 interface Props {
   disabled: boolean;
   micDisabled: boolean;
   micMode: MicMode;
+  canCancel: boolean;
   onSendText: (text: string) => void;
   onToggleMic: () => void;
+  onCancel: () => void;
 }
 
 export function InputBar({
   disabled,
   micDisabled,
   micMode,
+  canCancel,
   onSendText,
   onToggleMic,
+  onCancel,
 }: Props) {
   const [text, setText] = useState("");
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -73,15 +77,26 @@ export function InputBar({
       >
         <MicIcon />
       </button>
-      <button
-        type="button"
-        className="btn send-btn"
-        title="Send message"
-        disabled={disabled || !text.trim()}
-        onClick={submit}
-      >
-        <SendIcon />
-      </button>
+      {canCancel ? (
+        <button
+          type="button"
+          className="btn cancel-btn"
+          title="Stop response"
+          onClick={onCancel}
+        >
+          <StopIcon />
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn send-btn"
+          title="Send message"
+          disabled={disabled || !text.trim()}
+          onClick={submit}
+        >
+          <SendIcon />
+        </button>
+      )}
     </div>
   );
 }

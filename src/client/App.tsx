@@ -133,6 +133,11 @@ export function App() {
     [send]
   );
 
+  const handleCancel = useCallback(() => {
+    tts.stop();
+    send({ type: "message/cancel" });
+  }, [send, tts]);
+
   const handleToggleMic = useCallback(() => {
     if (tts.playingMessageId) {
       tts.stop();
@@ -203,8 +208,12 @@ export function App() {
           disabled={!detail || isStreaming}
           micDisabled={!detail}
           micMode={vad.mode}
+          canCancel={
+            detail?.status === "streaming" || detail?.status === "transcribing"
+          }
           onSendText={handleSendText}
           onToggleMic={handleToggleMic}
+          onCancel={handleCancel}
         />
       </main>
     </div>

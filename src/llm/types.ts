@@ -23,6 +23,7 @@ export interface LLMStreamTurnOptions {
   messages: ChatMessage[];
   latestUserMessage: string;
   providerSessionId?: string;
+  signal?: AbortSignal;
 }
 
 export interface ModelSummary {

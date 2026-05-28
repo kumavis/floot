@@ -90,6 +90,17 @@ export class ClaudeCliProvider implements LLMProvider {
       env: envForCliAuth(),
     }) as ChildProcessWithoutNullStreams;
 
+    const onAbort = () => {
+      if (!child.killed) child.kill("SIGTERM");
+    };
+    if (options.signal) {
+      if (options.signal.aborted) {
+        onAbort();
+      } else {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
     let stderr = "";
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderr += chunk.toString();

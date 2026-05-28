@@ -558,6 +558,15 @@ button {
   cursor: default;
 }
 
+.cancel-btn {
+  background: #dc2626;
+  color: white;
+}
+
+.cancel-btn:hover {
+  background: #b91c1c;
+}
+
 .mic-btn {
   background: var(--surface2);
   border: 2px solid var(--border);
@@ -602,7 +611,8 @@ button {
 }
 
 .mic-btn svg,
-.send-btn svg {
+.send-btn svg,
+.cancel-btn svg {
   width: 20px;
   height: 20px;
 }
