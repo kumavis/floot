@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { spawn } from "child_process";
 import { createInterface } from "readline";
 import type {
   ClaudeCliModelConfig,
@@ -88,7 +88,7 @@ export class ClaudeCliProvider implements LLMProvider {
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
       env: envForCliAuth(),
-    }) as ChildProcessWithoutNullStreams;
+    });
 
     const onAbort = () => {
       if (!child.killed) child.kill("SIGTERM");
