@@ -500,12 +500,6 @@ async function runAssistantTurn(sessionId: string): Promise<void> {
               if (currentAssistantMsgId) {
                 currentTTSState = startTTSForMessage(currentAssistantMsgId);
               }
-            } else if (event.content_block.type === "tool_use") {
-              store.appendToolCall(
-                sessionId,
-                event.content_block.name,
-                event.content_block.input ?? {}
-              );
             }
             break;
 
@@ -536,6 +530,8 @@ async function runAssistantTurn(sessionId: string): Promise<void> {
               currentAssistantMsgId = null;
             } else if (block.type === "tool_use") {
               contentBlocks.push(block);
+              // Input is streamed via input_json_delta; only complete at block stop.
+              store.appendToolCall(sessionId, block.name, block.input ?? {});
             }
             break;
           }
