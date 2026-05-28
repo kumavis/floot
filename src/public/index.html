@@ -8,18 +8,23 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #111111;
-      --surface: #1a1a1e;
-      --surface2: #222226;
+      --bg: #0f0f10;
+      --surface: #17171a;
+      --surface2: #1f1f23;
+      --surface3: #26262b;
       --border: #2a2a2e;
+      --border-strong: #3a3a40;
       --text: #e4e4e7;
-      --text-muted: #71717a;
+      --text-muted: #8a8a92;
+      --text-faint: #5e5e66;
       --user-bubble: #2563eb;
       --user-text: #ffffff;
       --assistant-bubble: #27272a;
       --accent: #3b82f6;
       --red: #ef4444;
       --green: #22c55e;
+      --tool: #a78bfa;
+      --tool-result: #86efac;
     }
 
     html, body { height: 100%; overflow: hidden; }
@@ -29,7 +34,130 @@
       background: var(--bg);
       color: var(--text);
       display: flex;
+    }
+
+    /* ----- Sidebar ----- */
+    .sidebar {
+      width: 240px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
       flex-direction: column;
+      height: 100vh;
+    }
+
+    .sidebar-header {
+      padding: 0.75rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .sidebar-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      flex: 1;
+    }
+
+    .new-session-btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 0.4rem 0.7rem;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: background 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .new-session-btn:hover { background: #2563eb; }
+    .new-session-btn svg { width: 14px; height: 14px; }
+
+    .session-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.4rem;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .session-empty {
+      color: var(--text-faint);
+      font-size: 0.8rem;
+      padding: 1rem 0.5rem;
+      text-align: center;
+    }
+
+    .session-item {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.5rem 0.6rem;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.12s;
+      position: relative;
+    }
+
+    .session-item:hover { background: var(--surface2); }
+    .session-item.active { background: var(--surface3); }
+    .session-item.active .session-title { color: var(--text); }
+
+    .session-status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--text-faint);
+    }
+
+    .session-status-dot.streaming { background: var(--accent); animation: pulse-dot 1.4s infinite; }
+    .session-status-dot.transcribing { background: var(--accent); animation: pulse-dot 1.4s infinite; }
+    .session-status-dot.error { background: var(--red); }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
+
+    .session-title {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-delete-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-faint);
+      cursor: pointer;
+      padding: 2px;
+      border-radius: 4px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .session-item:hover .session-delete-btn { display: flex; }
+    .session-delete-btn:hover { color: var(--red); background: rgba(239, 68, 68, 0.1); }
+    .session-delete-btn svg { width: 14px; height: 14px; }
+
+    /* ----- Main column ----- */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      height: 100vh;
     }
 
     .header {
@@ -40,11 +168,21 @@
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
+      gap: 0.5rem;
     }
 
-    .header-title { font-size: 1rem; font-weight: 600; }
+    .header-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
-    .header-controls { display: flex; align-items: center; gap: 0.5rem; }
+    .header-title.empty { color: var(--text-faint); font-weight: 400; }
+
+    .header-controls { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
 
     .mic-select {
       background: var(--surface2);
@@ -53,7 +191,7 @@
       color: var(--text);
       font-size: 0.75rem;
       padding: 0.3rem 0.5rem;
-      max-width: 180px;
+      max-width: 200px;
       outline: none;
     }
 
@@ -68,6 +206,16 @@
       gap: 0.5rem;
       scroll-behavior: smooth;
     }
+
+    .empty-state {
+      margin: auto;
+      text-align: center;
+      color: var(--text-faint);
+      font-size: 0.9rem;
+      padding: 2rem;
+    }
+
+    .empty-state .hint { font-size: 0.8rem; margin-top: 0.5rem; color: var(--text-faint); }
 
     .msg-row {
       display: flex;
@@ -110,6 +258,21 @@
       outline-offset: -1px;
     }
 
+    .msg-row.assistant.streaming .msg::after {
+      content: "";
+      display: inline-block;
+      width: 6px;
+      height: 1em;
+      background: var(--text-muted);
+      vertical-align: text-bottom;
+      margin-left: 2px;
+      animation: caret 1s steps(2) infinite;
+    }
+
+    @keyframes caret {
+      50% { opacity: 0; }
+    }
+
     .play-btn {
       background: none;
       border: none;
@@ -129,14 +292,6 @@
     .play-btn.playing { color: var(--green); }
     .play-btn svg { width: 12px; height: 12px; }
 
-    .msg-row.status { align-items: center; }
-    .msg-row.status .msg {
-      background: transparent;
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      padding: 0.25rem 0;
-    }
-
     .msg-row.error { align-items: center; }
     .msg-row.error .msg {
       background: transparent;
@@ -153,7 +308,7 @@
       padding: 0.5rem 0.75rem;
       font-size: 0.8rem;
       font-family: "SF Mono", "Fira Code", monospace;
-      color: #a78bfa;
+      color: var(--tool);
       animation: fadeIn 0.15s ease;
     }
 
@@ -177,27 +332,25 @@
     .tool-block.result {
       background: #1a2e1a;
       border-color: #2a3e2a;
-      color: #86efac;
+      color: var(--tool-result);
     }
 
     .tool-block.result .tool-label { color: #4ade80; }
     .tool-block.result pre { color: #bbf7d0; }
 
-    .typing-indicator span {
-      display: inline-block;
-      width: 6px; height: 6px;
-      border-radius: 50%;
-      background: var(--text-muted);
-      animation: blink 1.2s infinite;
-      margin-right: 3px;
+    .status-bar {
+      padding: 0.25rem 1rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      min-height: 1.6rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
     }
-    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
-    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
 
-    @keyframes blink {
-      0%, 60%, 100% { opacity: 0.3; }
-      30% { opacity: 1; }
-    }
+    .status-bar.error { color: var(--red); }
 
     .input-bar {
       display: flex;
@@ -226,6 +379,7 @@
 
     .text-input::placeholder { color: var(--text-muted); }
     .text-input:focus { border-color: var(--accent); }
+    .text-input:disabled { opacity: 0.5; cursor: not-allowed; }
 
     .btn {
       width: 42px; height: 42px;
@@ -250,6 +404,7 @@
     }
 
     .mic-btn:hover { border-color: var(--text-muted); }
+    .mic-btn:disabled { opacity: 0.3; cursor: not-allowed; border-color: var(--border); }
 
     .mic-btn.listening {
       border-color: var(--green);
@@ -291,35 +446,56 @@
   </style>
 </head>
 <body>
-  <div class="header">
-    <span class="header-title">Floot</span>
-    <div class="header-controls">
-      <select id="micSelect" class="mic-select">
-        <option value="">Loading devices...</option>
-      </select>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-title">Sessions</span>
+      <button id="newSessionBtn" class="new-session-btn" title="New session">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        New
+      </button>
     </div>
-  </div>
+    <div class="session-list" id="sessionList"></div>
+  </aside>
 
-  <div class="messages" id="messages"></div>
-  <div class="volume-bar"><div class="volume-bar-fill" id="volumeFill"></div></div>
+  <main class="main">
+    <div class="header">
+      <span class="header-title" id="headerTitle">Floot</span>
+      <div class="header-controls">
+        <select id="micSelect" class="mic-select">
+          <option value="">Loading devices...</option>
+        </select>
+      </div>
+    </div>
 
-  <div class="input-bar">
-    <textarea class="text-input" id="textInput" placeholder="Type a message..." rows="1"></textarea>
-    <button class="btn mic-btn" id="micBtn" title="Toggle microphone">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-        <line x1="12" y1="19" x2="12" y2="23"/>
-        <line x1="8" y1="23" x2="16" y2="23"/>
-      </svg>
-    </button>
-    <button class="btn send-btn" id="sendBtn" title="Send message" disabled>
-      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-    </button>
-  </div>
+    <div class="messages" id="messages"></div>
+    <div class="volume-bar"><div class="volume-bar-fill" id="volumeFill"></div></div>
+    <div class="status-bar" id="statusBar"></div>
+
+    <div class="input-bar">
+      <textarea class="text-input" id="textInput" placeholder="Type a message..." rows="1" disabled></textarea>
+      <button class="btn mic-btn" id="micBtn" title="Toggle microphone" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </button>
+      <button class="btn send-btn" id="sendBtn" title="Send message" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+      </button>
+    </div>
+  </main>
 
   <script>
+    const sessionListEl = document.getElementById("sessionList");
+    const newSessionBtn = document.getElementById("newSessionBtn");
+    const headerTitle = document.getElementById("headerTitle");
     const messagesEl = document.getElementById("messages");
+    const statusBar = document.getElementById("statusBar");
     const textInput = document.getElementById("textInput");
     const sendBtn = document.getElementById("sendBtn");
     const micBtn = document.getElementById("micBtn");
@@ -328,13 +504,307 @@
 
     const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
     const STOP_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+    const DELETE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+
+    // ----- Client state (mirrors server) -----
+    const state = {
+      sessions: [],
+      detail: null,
+      connected: false,
+    };
+
+    // Local UI memory
+    let autoplayedAssistantIds = new Set();
+    let prevDetailKey = null; // sessionId + status fingerprint
 
     let ws = null;
-    let currentAssistantRow = null;
-    let currentAssistantMsgEl = null;
-    let assistantText = "";
 
-    // --- Audio context for TTS ---
+    function send(cmd) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(cmd));
+      }
+    }
+
+    function connectWebSocket() {
+      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(`${protocol}//${location.host}`);
+      ws.onopen = () => {
+        state.connected = true;
+        setStatus("Connected");
+      };
+      ws.onmessage = (event) => {
+        if (typeof event.data !== "string") return;
+        let data;
+        try { data = JSON.parse(event.data); } catch { return; }
+        dispatch(data);
+      };
+      ws.onclose = () => {
+        state.connected = false;
+        setStatus("Disconnected. Reconnecting...");
+        autoplayedAssistantIds.clear();
+        setTimeout(connectWebSocket, 2000);
+      };
+      ws.onerror = () => { try { ws.close(); } catch {} };
+    }
+
+    function dispatch(event) {
+      switch (event.type) {
+        case "state/init":
+          state.sessions = event.sessions || [];
+          state.detail = event.detail || null;
+          renderSidebar();
+          renderChat();
+          break;
+        case "state/sessions_updated":
+          state.sessions = event.sessions || [];
+          renderSidebar();
+          break;
+        case "state/session_updated":
+          state.detail = event.detail || null;
+          renderChat();
+          break;
+        case "state/error":
+          setStatus(event.message || "Unknown error", true);
+          break;
+      }
+    }
+
+    // ----- Sidebar rendering -----
+    function renderSidebar() {
+      sessionListEl.innerHTML = "";
+
+      if (state.sessions.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "session-empty";
+        empty.textContent = "No sessions yet";
+        sessionListEl.appendChild(empty);
+        return;
+      }
+
+      for (const s of state.sessions) {
+        const item = document.createElement("div");
+        item.className = "session-item";
+        if (state.detail && state.detail.id === s.id) item.classList.add("active");
+
+        const dot = document.createElement("span");
+        dot.className = "session-status-dot";
+        if (s.status && s.status !== "idle") dot.classList.add(s.status);
+        item.appendChild(dot);
+
+        const title = document.createElement("span");
+        title.className = "session-title";
+        title.textContent = s.title || "Untitled";
+        item.appendChild(title);
+
+        const del = document.createElement("button");
+        del.className = "session-delete-btn";
+        del.title = "Delete session";
+        del.innerHTML = DELETE_SVG;
+        del.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (confirm(`Delete session "${s.title || "Untitled"}"?`)) {
+            send({ type: "session/delete", sessionId: s.id });
+          }
+        });
+        item.appendChild(del);
+
+        item.addEventListener("click", () => {
+          if (state.detail && state.detail.id === s.id) return;
+          send({ type: "session/select", sessionId: s.id });
+        });
+
+        sessionListEl.appendChild(item);
+      }
+    }
+
+    // ----- Chat rendering -----
+    function renderChat() {
+      const detail = state.detail;
+      const detailKey = detail ? `${detail.id}:${detail.status}` : "none";
+      const sessionChanged =
+        !prevDetailKey || !detail || prevDetailKey.split(":")[0] !== detail.id;
+      prevDetailKey = detailKey;
+
+      if (sessionChanged) {
+        autoplayedAssistantIds = new Set();
+        stopTTS();
+      }
+
+      if (!detail) {
+        headerTitle.textContent = "Floot";
+        headerTitle.classList.add("empty");
+        messagesEl.innerHTML = "";
+        const empty = document.createElement("div");
+        empty.className = "empty-state";
+        empty.textContent = "No session selected.";
+        const hint = document.createElement("div");
+        hint.className = "hint";
+        hint.textContent = "Create a new session from the sidebar to start chatting.";
+        empty.appendChild(hint);
+        messagesEl.appendChild(empty);
+        textInput.disabled = true;
+        sendBtn.disabled = true;
+        micBtn.disabled = true;
+        setStatus("");
+        return;
+      }
+
+      headerTitle.textContent = detail.title || "Untitled";
+      headerTitle.classList.remove("empty");
+
+      const wasNearBottom = isNearBottom();
+      messagesEl.innerHTML = "";
+
+      const messages = detail.messages || [];
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        const isLast = i === messages.length - 1;
+        renderMessage(msg, detail.status, isLast);
+      }
+
+      if (wasNearBottom || sessionChanged) {
+        scrollToBottom();
+      }
+
+      const streaming = detail.status === "streaming" || detail.status === "transcribing";
+      textInput.disabled = streaming;
+      sendBtn.disabled = streaming || !textInput.value.trim();
+      micBtn.disabled = false;
+
+      if (detail.status === "transcribing") {
+        setStatus("Transcribing audio...");
+      } else if (detail.status === "streaming") {
+        setStatus("Assistant is responding...");
+      } else if (detail.status === "error" && detail.lastError) {
+        setStatus(detail.lastError, true);
+      } else {
+        setStatus("");
+      }
+
+      maybeAutoplayLatestAssistant(detail);
+    }
+
+    function renderMessage(msg, sessionStatus, isLast) {
+      switch (msg.kind) {
+        case "user_text":
+          appendBubble("user", msg.text);
+          break;
+        case "assistant_text": {
+          const isStreaming = isLast && sessionStatus === "streaming";
+          appendAssistantBubble(msg.id, msg.text, isStreaming);
+          break;
+        }
+        case "tool_call":
+          appendToolBlock(msg.toolName, msg.text, false);
+          break;
+        case "tool_result":
+          appendToolBlock(msg.toolName, msg.text, true);
+          break;
+        case "error":
+          appendError(msg.text);
+          break;
+      }
+    }
+
+    function appendBubble(role, text) {
+      const row = document.createElement("div");
+      row.className = `msg-row ${role}`;
+      const msg = document.createElement("div");
+      msg.className = "msg";
+      msg.textContent = text;
+      row.appendChild(msg);
+      messagesEl.appendChild(row);
+    }
+
+    function appendAssistantBubble(msgId, text, streaming) {
+      const row = document.createElement("div");
+      row.className = "msg-row assistant";
+      if (streaming) row.classList.add("streaming");
+      row.dataset.msgId = msgId;
+
+      const msgEl = document.createElement("div");
+      msgEl.className = "msg";
+      msgEl.textContent = text;
+      row.appendChild(msgEl);
+
+      if (!streaming && text.trim()) {
+        const playBtn = document.createElement("button");
+        playBtn.className = "play-btn";
+        playBtn.innerHTML = PLAY_SVG + " Play";
+        playBtn.addEventListener("click", () => {
+          if (ttsPlaying && currentPlayBtn === playBtn) {
+            stopTTS();
+            unmuteMicAfterPlayback();
+          } else {
+            playTTSFromUrl(`/api/tts/${msgId}`, playBtn, msgEl);
+          }
+        });
+        row.appendChild(playBtn);
+      }
+
+      messagesEl.appendChild(row);
+    }
+
+    function appendToolBlock(toolName, content, isResult) {
+      const block = document.createElement("div");
+      block.className = "tool-block" + (isResult ? " result" : "");
+      const label = document.createElement("div");
+      label.className = "tool-label";
+      label.textContent = (toolName || "tool") + (isResult ? " result" : "");
+      block.appendChild(label);
+      const pre = document.createElement("pre");
+      pre.textContent = content;
+      block.appendChild(pre);
+      messagesEl.appendChild(block);
+    }
+
+    function appendError(text) {
+      const row = document.createElement("div");
+      row.className = "msg-row error";
+      const msg = document.createElement("div");
+      msg.className = "msg";
+      msg.textContent = text;
+      row.appendChild(msg);
+      messagesEl.appendChild(row);
+    }
+
+    function setStatus(text, isError) {
+      statusBar.textContent = text || "";
+      statusBar.classList.toggle("error", !!isError);
+    }
+
+    function isNearBottom() {
+      return (
+        messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80
+      );
+    }
+
+    function scrollToBottom() {
+      requestAnimationFrame(() => {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      });
+    }
+
+    function maybeAutoplayLatestAssistant(detail) {
+      if (detail.status !== "idle") return;
+      const messages = detail.messages || [];
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m.kind === "assistant_text" && m.text.trim()) {
+          if (!autoplayedAssistantIds.has(m.id)) {
+            autoplayedAssistantIds.add(m.id);
+            const row = messagesEl.querySelector(`.msg-row[data-msg-id="${m.id}"]`);
+            const playBtn = row ? row.querySelector(".play-btn") : null;
+            const msgEl = row ? row.querySelector(".msg") : null;
+            playTTSFromUrl(`/api/tts/${m.id}`, playBtn, msgEl);
+          }
+          return;
+        }
+        if (m.kind === "user_text") return;
+      }
+    }
+
+    // ----- TTS playback -----
     let ttsAudioCtx = null;
     let ttsSource = null;
     let ttsPlaying = false;
@@ -393,7 +863,6 @@
         ttsSource.start(0);
       } catch (err) {
         console.error("TTS playback error:", err);
-        addError("TTS playback failed: " + err.message);
         unmuteMicAfterPlayback();
       }
     }
@@ -430,178 +899,16 @@
       }
     }
 
-    // --- WebSocket ---
-    function connectWebSocket() {
-      const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(`${protocol}//${location.host}`);
-      ws.onopen = () => addStatus("Connected");
-      ws.onmessage = handleServerMessage;
-      ws.onclose = () => {
-        addStatus("Disconnected. Reconnecting...");
-        setTimeout(connectWebSocket, 2000);
-      };
-      ws.onerror = () => ws.close();
-    }
+    // ----- Input handlers -----
+    newSessionBtn.addEventListener("click", () => {
+      send({ type: "session/create" });
+    });
 
-    function handleServerMessage(event) {
-      const data = JSON.parse(event.data);
-
-      switch (data.type) {
-        case "status":
-          if (data.message) addStatus(data.message);
-          break;
-
-        case "transcript":
-          addMessage("user", data.text);
-          break;
-
-        case "claude_start":
-          assistantText = "";
-          const row = addAssistantRow();
-          currentAssistantRow = row;
-          currentAssistantMsgEl = row.querySelector(".msg");
-          showTyping(currentAssistantMsgEl);
-          break;
-
-        case "claude_delta":
-          assistantText += data.text;
-          if (currentAssistantMsgEl) {
-            hideTyping(currentAssistantMsgEl);
-            currentAssistantMsgEl.textContent = assistantText;
-            scrollToBottom();
-          }
-          break;
-
-        case "claude_done": {
-          const msgId = data.msgId;
-          if (currentAssistantRow && msgId) {
-            const ttsUrl = `/api/tts/${msgId}`;
-            currentAssistantRow.dataset.ttsUrl = ttsUrl;
-            const playBtn = currentAssistantRow.querySelector(".play-btn");
-            if (playBtn) playBtn.style.display = "flex";
-
-            const msgEl = currentAssistantRow.querySelector(".msg");
-            playTTSFromUrl(ttsUrl, playBtn, msgEl);
-          }
-          currentAssistantMsgEl = null;
-          currentAssistantRow = null;
-          break;
-        }
-
-        case "tool_exec":
-          addToolBlock(data.tool, JSON.stringify(data.input, null, 2));
-          break;
-
-        case "tool_result":
-          addToolResult(data.tool, data.result);
-          break;
-
-        case "error":
-          addError(data.message);
-          break;
-      }
-    }
-
-    // --- Messages UI ---
-    function addMessage(role, text) {
-      const row = document.createElement("div");
-      row.className = `msg-row ${role}`;
-      const msg = document.createElement("div");
-      msg.className = "msg";
-      msg.textContent = text;
-      row.appendChild(msg);
-      messagesEl.appendChild(row);
-      scrollToBottom();
-      return row;
-    }
-
-    function addAssistantRow() {
-      const row = document.createElement("div");
-      row.className = "msg-row assistant";
-
-      const msg = document.createElement("div");
-      msg.className = "msg";
-      row.appendChild(msg);
-
-      const playBtn = document.createElement("button");
-      playBtn.className = "play-btn";
-      playBtn.innerHTML = PLAY_SVG + " Play";
-      playBtn.style.display = "none";
-      playBtn.addEventListener("click", () => {
-        if (ttsPlaying && currentPlayBtn === playBtn) {
-          stopTTS();
-          unmuteMicAfterPlayback();
-        } else {
-          const url = row.dataset.ttsUrl;
-          if (url) playTTSFromUrl(url, playBtn, msg);
-        }
-      });
-      row.appendChild(playBtn);
-
-      messagesEl.appendChild(row);
-      scrollToBottom();
-      return row;
-    }
-
-    function addStatus(text) {
-      const row = document.createElement("div");
-      row.className = "msg-row status";
-      const msg = document.createElement("div");
-      msg.className = "msg";
-      msg.textContent = text;
-      row.appendChild(msg);
-      messagesEl.appendChild(row);
-      scrollToBottom();
-    }
-
-    function addError(text) {
-      const row = document.createElement("div");
-      row.className = "msg-row error";
-      const msg = document.createElement("div");
-      msg.className = "msg";
-      msg.textContent = text;
-      row.appendChild(msg);
-      messagesEl.appendChild(row);
-      scrollToBottom();
-    }
-
-    function addToolBlock(toolName, input) {
-      const block = document.createElement("div");
-      block.className = "tool-block";
-      block.innerHTML = `<div class="tool-label">${toolName}</div><pre></pre>`;
-      block.querySelector("pre").textContent = input;
-      messagesEl.appendChild(block);
-      scrollToBottom();
-    }
-
-    function addToolResult(toolName, result) {
-      const block = document.createElement("div");
-      block.className = "tool-block result";
-      block.innerHTML = `<div class="tool-label">${toolName} result</div><pre></pre>`;
-      block.querySelector("pre").textContent = result;
-      messagesEl.appendChild(block);
-      scrollToBottom();
-    }
-
-    function showTyping(el) {
-      const indicator = document.createElement("span");
-      indicator.className = "typing-indicator";
-      indicator.innerHTML = "<span></span><span></span><span></span>";
-      el.appendChild(indicator);
-    }
-
-    function hideTyping(el) {
-      const t = el.querySelector(".typing-indicator");
-      if (t) t.remove();
-    }
-
-    function scrollToBottom() {
-      requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
-    }
-
-    // --- Text input ---
     textInput.addEventListener("input", () => {
-      sendBtn.disabled = !textInput.value.trim();
+      const streaming =
+        state.detail &&
+        (state.detail.status === "streaming" || state.detail.status === "transcribing");
+      sendBtn.disabled = !textInput.value.trim() || streaming;
       textInput.style.height = "auto";
       textInput.style.height = Math.min(textInput.scrollHeight, 120) + "px";
     });
@@ -617,14 +924,14 @@
 
     function sendText() {
       const text = textInput.value.trim();
-      if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-      ws.send(JSON.stringify({ type: "text", content: text }));
+      if (!text || !state.detail) return;
+      send({ type: "message/send_text", content: text });
       textInput.value = "";
       textInput.style.height = "auto";
       sendBtn.disabled = true;
     }
 
-    // --- Mic device enumeration ---
+    // ----- Mic device enumeration -----
     async function loadDevices() {
       try {
         await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
@@ -645,7 +952,7 @@
     navigator.mediaDevices.addEventListener("devicechange", loadDevices);
     loadDevices();
 
-    // --- VAD + Recording ---
+    // ----- VAD + Recording -----
     const VAD_THRESHOLD = 0.015;
     const SILENCE_TIMEOUT_MS = 1500;
     const MIN_SPEECH_MS = 400;
@@ -667,6 +974,7 @@
         unmuteMicAfterPlayback();
         return;
       }
+      if (!state.detail) return;
       if (micStream) {
         stopMic();
       } else {
@@ -692,7 +1000,7 @@
         micBtn.classList.add("listening");
         vadLoop();
       } catch (e) {
-        addError("Mic access denied: " + e.message);
+        setStatus("Mic access denied: " + e.message, true);
       }
     }
 
@@ -797,7 +1105,7 @@
       if (!mediaRecorder || mediaRecorder.state === "inactive") return;
       mediaRecorder.onstop = () => {
         const blob = new Blob(chunks, { type: "audio/webm" });
-        if (blob.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+        if (blob.size > 0 && ws && ws.readyState === WebSocket.OPEN && state.detail) {
           ws.send(blob);
         }
         chunks = [];
@@ -811,7 +1119,7 @@
       mediaRecorder.stop();
     }
 
-    // --- Init ---
+    // ----- Init -----
     connectWebSocket();
   </script>
 </body>
