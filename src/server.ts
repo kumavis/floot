@@ -27,6 +27,7 @@ const anthropic = new Anthropic({
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
+const CLIENT_DIST_DIR = path.resolve(PROJECT_ROOT, "dist/public");
 
 const PORT = Number(process.env.PORT) || 3000;
 const WHISPER_MODEL = process.env.WHISPER_MODEL || "base";
@@ -42,7 +43,7 @@ async function ensureUploadsDir() {
 }
 
 const app = express();
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(CLIENT_DIST_DIR));
 
 const store = new SessionStore();
 
