@@ -16,6 +16,7 @@ import {
   type SessionDetail,
   type SessionSummary,
 } from "./state/session-store.js";
+import { SayTTSProvider, type SayTTSStream } from "./tts/index.js";
 
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
@@ -46,17 +47,78 @@ const app = express();
 app.use(express.static(CLIENT_DIST_DIR));
 
 const store = new SessionStore();
+const ttsProvider = new SayTTSProvider(UPLOADS_DIR, TTS_VOICE);
+
+// Track active TTS streams per message so we can stream audio for in-progress responses
+interface ActiveTTSState {
+  stream: SayTTSStream;
+  audioChunks: Buffer[];
+  done: boolean;
+  waiters: Array<() => void>; // Resolve functions for pending waitForChunk calls
+}
+const activeTTSByMessage = new Map<string, ActiveTTSState>();
 
 // ----- TTS endpoint -----
+// This endpoint streams audio for a message. If the message is still being generated,
+// it will wait for audio chunks as they become available.
 app.get("/api/tts/:id", async (req, res) => {
   await ensureUploadsDir();
 
-  const lookup = store.getAssistantTextById(req.params.id);
+  const messageId = req.params.id;
+  const lookup = store.getAssistantTextById(messageId);
   if (!lookup) {
     res.status(404).json({ error: "Message not found" });
     return;
   }
 
+  // Check if there's an active TTS stream for this message (still generating)
+  const activeState = activeTTSByMessage.get(messageId);
+
+  res.setHeader("Content-Type", "audio/mpeg");
+  res.setHeader("Transfer-Encoding", "chunked");
+  res.setHeader("Cache-Control", "no-cache");
+
+  if (activeState) {
+    // Stream audio chunks as they become available
+    let chunkIndex = 0;
+    
+    const sendAvailableChunks = () => {
+      while (chunkIndex < activeState.audioChunks.length) {
+        res.write(activeState.audioChunks[chunkIndex]);
+        chunkIndex++;
+      }
+    };
+
+    const waitForNextChunk = (): Promise<void> => {
+      return new Promise((resolve) => {
+        // If there are already chunks available or done, resolve immediately
+        if (chunkIndex < activeState.audioChunks.length || activeState.done) {
+          resolve();
+          return;
+        }
+        // Otherwise wait for a signal
+        activeState.waiters.push(resolve);
+      });
+    };
+
+    // Stream loop
+    while (!req.socket.destroyed) {
+      sendAvailableChunks();
+      
+      if (activeState.done && chunkIndex >= activeState.audioChunks.length) {
+        // All done
+        break;
+      }
+      
+      // Wait for more chunks or completion
+      await waitForNextChunk();
+    }
+    
+    res.end();
+    return;
+  }
+
+  // No active stream - message is complete, generate all audio at once (existing behavior)
   const tmpId = randomUUID();
   const aiffPath = path.join(UPLOADS_DIR, `${tmpId}.aiff`);
 
@@ -75,10 +137,6 @@ app.get("/api/tts/:id", async (req, res) => {
     }
     return;
   }
-
-  res.setHeader("Content-Type", "audio/mpeg");
-  res.setHeader("Transfer-Encoding", "chunked");
-  res.setHeader("Cache-Control", "no-cache");
 
   const ffmpegProc = spawn(
     "ffmpeg",
@@ -130,6 +188,14 @@ const connections = new Set<Connection>();
 function sendJson(ws: WebSocket, data: Record<string, unknown>): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(data));
+  }
+}
+
+function broadcastJsonToSession(sessionId: string, data: Record<string, unknown>): void {
+  for (const conn of connections) {
+    if (conn.selectedSessionId === sessionId) {
+      sendJson(conn.ws, data);
+    }
   }
 }
 
@@ -352,6 +418,56 @@ async function transcribe(audioPath: string): Promise<string> {
   }
 }
 
+// ----- TTS streaming helpers -----
+function startTTSForMessage(messageId: string): ActiveTTSState {
+  const stream = ttsProvider.createStream();
+  const state: ActiveTTSState = {
+    stream,
+    audioChunks: [],
+    done: false,
+    waiters: [],
+  };
+
+  const wakeWaiters = () => {
+    const toNotify = state.waiters;
+    state.waiters = [];
+    for (const resolve of toNotify) resolve();
+  };
+
+  // Cleanup is idempotent: both `done` and `error` may fire for the same
+  // stream, but the map entry must only be scheduled for deletion once.
+  let cleanupScheduled = false;
+  const scheduleCleanup = () => {
+    if (cleanupScheduled) return;
+    cleanupScheduled = true;
+    // Delay so late-arriving HTTP requests can still drain audioChunks.
+    setTimeout(() => {
+      activeTTSByMessage.delete(messageId);
+    }, 30000);
+  };
+
+  stream.on("audio", (chunk: Buffer) => {
+    state.audioChunks.push(chunk);
+    wakeWaiters();
+  });
+
+  stream.on("done", () => {
+    state.done = true;
+    wakeWaiters();
+    scheduleCleanup();
+  });
+
+  stream.on("error", (err: Error) => {
+    console.error("[TTS stream error]", err);
+    state.done = true;
+    wakeWaiters();
+    scheduleCleanup();
+  });
+
+  activeTTSByMessage.set(messageId, state);
+  return state;
+}
+
 // ----- Orchestration -----
 async function runAssistantTurn(sessionId: string): Promise<void> {
   store.setStatus(sessionId, "streaming");
@@ -372,6 +488,7 @@ async function runAssistantTurn(sessionId: string): Promise<void> {
 
       const contentBlocks: ContentBlock[] = [];
       let currentAssistantMsgId: string | null = null;
+      let currentTTSState: ActiveTTSState | null = null;
 
       for await (const event of stream) {
         switch (event.type) {
@@ -379,6 +496,10 @@ async function runAssistantTurn(sessionId: string): Promise<void> {
             if (event.content_block.type === "text") {
               const msg = store.beginAssistantText(sessionId);
               currentAssistantMsgId = msg?.id ?? null;
+              // Start TTS streaming for this message
+              if (currentAssistantMsgId) {
+                currentTTSState = startTTSForMessage(currentAssistantMsgId);
+              }
             } else if (event.content_block.type === "tool_use") {
               store.appendToolCall(
                 sessionId,
@@ -395,6 +516,10 @@ async function runAssistantTurn(sessionId: string): Promise<void> {
                 currentAssistantMsgId,
                 event.delta.text
               );
+              // Feed text to the TTS stream
+              if (currentTTSState) {
+                currentTTSState.stream.write(event.delta.text);
+              }
             }
             break;
 
@@ -403,6 +528,11 @@ async function runAssistantTurn(sessionId: string): Promise<void> {
             const block = finalMsg.content[event.index];
             if (block.type === "text") {
               contentBlocks.push(block);
+              // End the TTS stream for this text block
+              if (currentTTSState) {
+                currentTTSState.stream.end();
+                currentTTSState = null;
+              }
               currentAssistantMsgId = null;
             } else if (block.type === "tool_use") {
               contentBlocks.push(block);

@@ -70,13 +70,20 @@ export function App() {
     }
   }, [detail?.id, tts]);
 
-  // Autoplay newest assistant message when session goes idle
+  // Autoplay assistant message as soon as it appears (while streaming)
+  // This enables true streaming TTS - audio starts before response is complete
   useEffect(() => {
     if (!detail) return;
-    if (detail.status !== "idle") return;
+    
+    // Find the latest assistant text message
     const latest = findLatestAssistantText(detail);
     if (!latest) return;
+    
+    // Don't autoplay if we've already started playing this message
     if (autoplayedRef.current.has(latest.id)) return;
+    
+    // Start playing as soon as we see a new assistant message
+    // (even while status is still "streaming")
     autoplayedRef.current.add(latest.id);
     void tts.play(latest.id);
   }, [detail, tts]);

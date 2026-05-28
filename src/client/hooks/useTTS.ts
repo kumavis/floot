@@ -12,123 +12,94 @@ interface Options {
 }
 
 export function useTTS(options: Options = {}): TTSApi {
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
-  const isPlayingRef = useRef(false);
-  // Monotonic token: every stop()/play() bumps this so any in-flight
-  // play() awaits that resume later can detect they've been superseded
-  // and bail out before starting a (now duplicate) audio source.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const playTokenRef = useRef(0);
   const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
 
   const optsRef = useRef(options);
   optsRef.current = options;
 
-  const getCtx = useCallback(() => {
-    let ctx = audioCtxRef.current;
-    if (!ctx || ctx.state === "closed") {
-      ctx = new AudioContext();
-      audioCtxRef.current = ctx;
-    }
-    return ctx;
-  }, []);
-
-  const stopActiveSource = useCallback(() => {
-    const src = sourceRef.current;
-    if (!src) return;
-    src.onended = null;
-    try {
-      src.stop();
-    } catch {
-      /* already stopped */
-    }
-    try {
-      src.disconnect();
-    } catch {
-      /* noop */
-    }
-    sourceRef.current = null;
-  }, []);
-
   const stop = useCallback(() => {
     playTokenRef.current++;
-    stopActiveSource();
-    if (isPlayingRef.current) {
-      isPlayingRef.current = false;
-      setPlayingMessageId(null);
-      optsRef.current.onPlaybackEnd?.();
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.src = "";
+      audio.load();
     }
-  }, [stopActiveSource]);
+    setPlayingMessageId(null);
+    optsRef.current.onPlaybackEnd?.();
+  }, []);
 
   const play = useCallback(
     async (messageId: string) => {
-      // Internal teardown of any active source without flipping the
-      // "playing" state — we're about to replace it.
-      playTokenRef.current++;
-      stopActiveSource();
+      // Stop any current playback
+      const currentAudio = audioRef.current;
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = "";
+      }
 
       const myToken = ++playTokenRef.current;
       const isCancelled = () => playTokenRef.current !== myToken;
 
-      // Optimistic UI: mark as playing immediately so the bubble shows
-      // the green outline / Stop affordance before audio is ready.
-      const wasPlaying = isPlayingRef.current;
-      isPlayingRef.current = true;
+      // Mark as playing immediately for UI feedback
       setPlayingMessageId(messageId);
-      if (!wasPlaying) {
-        optsRef.current.onPlaybackStart?.();
-      }
+      optsRef.current.onPlaybackStart?.();
 
       try {
-        const resp = await fetch(`/api/tts/${messageId}`);
-        if (isCancelled()) return;
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        // Create a new audio element
+        const audio = new Audio();
+        audioRef.current = audio;
 
-        const buffer = await resp.arrayBuffer();
-        if (isCancelled()) return;
+        // Set up event handlers before setting src
+        const playPromise = new Promise<void>((resolve, reject) => {
+          audio.onended = () => {
+            if (isCancelled()) return;
+            setPlayingMessageId(null);
+            optsRef.current.onPlaybackEnd?.();
+            resolve();
+          };
 
-        const ctx = getCtx();
-        if (ctx.state === "suspended") await ctx.resume();
-        if (isCancelled()) return;
+          audio.onerror = () => {
+            if (isCancelled()) return;
+            const error = audio.error;
+            reject(new Error(`Audio error: ${error?.message || "unknown"}`));
+          };
 
-        const audioBuf = await ctx.decodeAudioData(buffer);
-        if (isCancelled()) return;
+          // This fires when enough data is buffered to start playing
+          audio.oncanplay = () => {
+            if (isCancelled()) return;
+            audio.play().catch(reject);
+          };
+        });
 
-        // Final guard: if anything else grabbed the audio output, stop it first.
-        stopActiveSource();
+        // Set the streaming URL - the browser will start fetching and playing
+        // as soon as it has enough data buffered
+        audio.src = `/api/tts/${messageId}`;
+        audio.load();
 
-        const src = ctx.createBufferSource();
-        src.buffer = audioBuf;
-        src.connect(ctx.destination);
-        sourceRef.current = src;
-
-        src.onended = () => {
-          if (sourceRef.current !== src) return;
-          sourceRef.current = null;
-          isPlayingRef.current = false;
-          setPlayingMessageId(null);
-          optsRef.current.onPlaybackEnd?.();
-        };
-
-        src.start(0);
+        await playPromise;
       } catch (err) {
         if (isCancelled()) return;
         console.error("TTS playback error:", err);
-        isPlayingRef.current = false;
         setPlayingMessageId(null);
         optsRef.current.onPlaybackEnd?.();
       }
     },
-    [getCtx, stopActiveSource]
+    []
   );
 
   useEffect(() => {
     return () => {
       playTokenRef.current++;
-      stopActiveSource();
-      isPlayingRef.current = false;
+      const audio = audioRef.current;
+      if (audio) {
+        audio.pause();
+        audio.src = "";
+      }
     };
-  }, [stopActiveSource]);
+  }, []);
 
   return { playingMessageId, play, stop };
 }
