@@ -46,11 +46,8 @@ export function ChatView({ detail, playingMessageId, onPlay, onStop }: Props) {
   }
 
   const messages = detail.messages;
-  const lastMsg = messages[messages.length - 1];
-  const showThinking =
-    detail.status === "streaming" &&
-    lastMsg !== undefined &&
-    lastMsg.kind !== "assistant_text";
+  const showTranscribing = detail.status === "transcribing";
+  const showThinking = detail.status === "streaming";
   return (
     <div className="messages" ref={containerRef}>
       {messages.map((msg, idx) => {
@@ -96,6 +93,13 @@ export function ChatView({ detail, playingMessageId, onPlay, onStop }: Props) {
             return null;
         }
       })}
+      {showTranscribing && (
+        <div className="thinking transcribing">
+          <span className="thinking-dot" />
+          <span className="thinking-dot" />
+          <span className="thinking-dot" />
+        </div>
+      )}
       {showThinking && (
         <div className="thinking">
           <span className="thinking-dot" />

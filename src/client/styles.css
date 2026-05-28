@@ -482,6 +482,15 @@ button {
   animation: fadeIn 0.15s ease;
 }
 
+.thinking.transcribing {
+  align-self: flex-end;
+  background: var(--user-bubble);
+}
+
+.thinking.transcribing .thinking-dot {
+  background: var(--user-text);
+}
+
 .thinking-dot {
   width: 6px;
   height: 6px;
