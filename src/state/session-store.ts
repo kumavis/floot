@@ -18,7 +18,8 @@ export type UiMessageKind =
   | "assistant_text"
   | "tool_call"
   | "tool_result"
-  | "error";
+  | "error"
+  | "end_reason";
 
 export interface UiMessage {
   id: string;
@@ -254,6 +255,21 @@ export class SessionStore extends EventEmitter {
       kind: "tool_result",
       toolName,
       text: truncated,
+      createdAt: Date.now(),
+    };
+    record.uiMessages.push(msg);
+    this.touch(record);
+    this.emit("sessionUpdated", id);
+    return msg;
+  }
+
+  appendEndReason(id: string, text: string): UiMessage | undefined {
+    const record = this.sessions.get(id);
+    if (!record) return undefined;
+    const msg: UiMessage = {
+      id: randomUUID(),
+      kind: "end_reason",
+      text,
       createdAt: Date.now(),
     };
     record.uiMessages.push(msg);

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { SessionDetail } from "../types";
 import {
   AssistantBubble,
+  EndReasonBadge,
   ErrorBubble,
   UserBubble,
 } from "./MessageBubble";
@@ -45,6 +46,11 @@ export function ChatView({ detail, playingMessageId, onPlay, onStop }: Props) {
   }
 
   const messages = detail.messages;
+  const lastMsg = messages[messages.length - 1];
+  const showThinking =
+    detail.status === "streaming" &&
+    lastMsg !== undefined &&
+    lastMsg.kind !== "assistant_text";
   return (
     <div className="messages" ref={containerRef}>
       {messages.map((msg, idx) => {
@@ -84,10 +90,19 @@ export function ChatView({ detail, playingMessageId, onPlay, onStop }: Props) {
             );
           case "error":
             return <ErrorBubble key={msg.id} text={msg.text} />;
+          case "end_reason":
+            return <EndReasonBadge key={msg.id} text={msg.text} />;
           default:
             return null;
         }
       })}
+      {showThinking && (
+        <div className="thinking">
+          <span className="thinking-dot" />
+          <span className="thinking-dot" />
+          <span className="thinking-dot" />
+        </div>
+      )}
     </div>
   );
 }

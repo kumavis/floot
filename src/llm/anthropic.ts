@@ -114,11 +114,14 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     const finalMessage = await stream.finalMessage();
-    yield {
-      type: "turn_end",
-      stopReason:
-        finalMessage.stop_reason === "tool_use" ? "tool_use" : "end_turn",
-    };
+    const rawStop = finalMessage.stop_reason;
+    if (rawStop === "tool_use") {
+      yield { type: "turn_end", stopReason: "tool_use" };
+    } else if (rawStop === "end_turn" || rawStop === null || rawStop === undefined) {
+      yield { type: "turn_end", stopReason: "end_turn" };
+    } else {
+      yield { type: "turn_end", stopReason: "stop", reason: rawStop };
+    }
   }
 }
 

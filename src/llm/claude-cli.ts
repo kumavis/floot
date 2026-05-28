@@ -110,7 +110,7 @@ export class ClaudeCliProvider implements LLMProvider {
     const pendingLines: ClaudeStreamLine[] = [];
     let resolveNext: (() => void) | null = null;
     let closed = false;
-    let exitError: Error | null = null;
+    const errorRef: { current: Error | null } = { current: null };
 
     const notify = () => {
       if (resolveNext) {
@@ -126,7 +126,7 @@ export class ClaudeCliProvider implements LLMProvider {
         pendingLines.push(JSON.parse(line) as ClaudeStreamLine);
         notify();
       } catch (err) {
-        exitError =
+        errorRef.current =
           err instanceof Error
             ? err
             : new Error("Failed to parse Claude CLI output");
@@ -141,8 +141,8 @@ export class ClaudeCliProvider implements LLMProvider {
 
     const exitPromise = new Promise<void>((resolve) => {
       child.on("close", (code) => {
-        if (code !== 0 && !exitError) {
-          exitError = new Error(
+        if (code !== 0 && !errorRef.current) {
+          errorRef.current = new Error(
             `Claude CLI exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`
           );
         }
@@ -151,7 +151,7 @@ export class ClaudeCliProvider implements LLMProvider {
         resolve();
       });
       child.on("error", (err) => {
-        exitError = err;
+        errorRef.current = err;
         closed = true;
         notify();
         resolve();
@@ -162,10 +162,6 @@ export class ClaudeCliProvider implements LLMProvider {
     const announcedToolIds = new Set<string>();
 
     while (pendingLines.length > 0 || !closed) {
-      if (exitError) {
-        throw exitError;
-      }
-
       const parsed = pendingLines.shift();
       if (!parsed) {
         if (closed) break;
@@ -232,12 +228,19 @@ export class ClaudeCliProvider implements LLMProvider {
     }
 
     await exitPromise;
-    if (exitError) {
-      throw exitError;
-    }
 
     if (textStarted) {
       yield { type: "text_end" };
+    }
+
+    const finalError = errorRef.current as Error | null;
+    if (finalError) {
+      yield {
+        type: "turn_end",
+        stopReason: "error",
+        error: finalError.message,
+      };
+      return;
     }
 
     yield { type: "turn_end", stopReason: "end_turn" };

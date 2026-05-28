@@ -5,7 +5,8 @@ export type UiMessageKind =
   | "assistant_text"
   | "tool_call"
   | "tool_result"
-  | "error";
+  | "error"
+  | "end_reason";
 
 export interface UiMessage {
   id: string;

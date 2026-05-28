@@ -10,12 +10,19 @@ export interface ChatMessage {
   content: string | ContentBlock[];
 }
 
+export type TurnStopReason = "end_turn" | "tool_use" | "stop" | "error";
+
 export type LLMStreamEvent =
   | { type: "text_start" }
   | { type: "text_delta"; text: string }
   | { type: "text_end" }
   | { type: "tool_call"; id: string; name: string; input: Record<string, unknown> }
-  | { type: "turn_end"; stopReason: "end_turn" | "tool_use" }
+  | {
+      type: "turn_end";
+      stopReason: TurnStopReason;
+      reason?: string;
+      error?: string;
+    }
   | { type: "provider_session"; sessionId: string };
 
 export interface LLMStreamTurnOptions {

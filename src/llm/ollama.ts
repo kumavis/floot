@@ -28,6 +28,7 @@ interface OllamaStreamChunk {
     }>;
   };
   done?: boolean;
+  done_reason?: string;
 }
 
 function findToolName(messages: ChatMessage[], toolUseId: string): string | undefined {
@@ -201,10 +202,20 @@ export class OllamaProvider implements LLMProvider {
             };
           }
 
-          yield {
-            type: "turn_end",
-            stopReason: toolCalls.size > 0 ? "tool_use" : "end_turn",
-          };
+          if (toolCalls.size > 0) {
+            yield { type: "turn_end", stopReason: "tool_use" };
+          } else if (
+            parsed.done_reason &&
+            parsed.done_reason !== "stop"
+          ) {
+            yield {
+              type: "turn_end",
+              stopReason: "stop",
+              reason: parsed.done_reason,
+            };
+          } else {
+            yield { type: "turn_end", stopReason: "end_turn" };
+          }
           return;
         }
       }

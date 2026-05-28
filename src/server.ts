@@ -20,6 +20,7 @@ import {
 import { SayTTSProvider, type SayTTSStream } from "./tts/index.js";
 import { ModelsConfig } from "./config/models.js";
 import { createLLMProvider, type LLMStreamEvent } from "./llm/index.js";
+import type { TurnStopReason } from "./llm/types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -536,16 +537,20 @@ function startTTSForMessage(messageId: string): ActiveTTSState {
   return state;
 }
 
+interface TurnStreamState {
+  contentBlocks: ContentBlock[];
+  currentAssistantMsgId: string | null;
+  currentTTSState: ActiveTTSState | null;
+  currentText: string;
+  stopReason: TurnStopReason;
+  stopReasonDetail: string | null;
+  errorMessage: string | null;
+}
+
 async function consumeStreamEvent(
   sessionId: string,
   event: LLMStreamEvent,
-  state: {
-    contentBlocks: ContentBlock[];
-    currentAssistantMsgId: string | null;
-    currentTTSState: ActiveTTSState | null;
-    currentText: string;
-    stopReason: "end_turn" | "tool_use";
-  }
+  state: TurnStreamState
 ): Promise<void> {
   switch (event.type) {
     case "provider_session":
@@ -595,6 +600,12 @@ async function consumeStreamEvent(
       break;
     case "turn_end":
       state.stopReason = event.stopReason;
+      if (event.error) {
+        state.errorMessage = event.error;
+      }
+      if (event.reason) {
+        state.stopReasonDetail = event.reason;
+      }
       break;
   }
 }
@@ -617,6 +628,9 @@ async function runAssistantTurn(
 
   let pendingToolUses: Array<{ id: string; name: string }> = [];
   const pendingToolResults: ContentBlock[] = [];
+  let finalStopReason: TurnStopReason = "end_turn";
+  let finalErrorMessage: string | null = null;
+  let finalStopReasonDetail: string | null = null;
 
   try {
     while (true) {
@@ -636,12 +650,14 @@ async function runAssistantTurn(
         signal,
       });
 
-      const streamState = {
-        contentBlocks: [] as ContentBlock[],
-        currentAssistantMsgId: null as string | null,
-        currentTTSState: null as ActiveTTSState | null,
+      const streamState: TurnStreamState = {
+        contentBlocks: [],
+        currentAssistantMsgId: null,
+        currentTTSState: null,
         currentText: "",
-        stopReason: "end_turn" as "end_turn" | "tool_use",
+        stopReason: "end_turn",
+        stopReasonDetail: null,
+        errorMessage: null,
       };
 
       try {
@@ -669,6 +685,10 @@ async function runAssistantTurn(
       if (streamState.contentBlocks.length > 0) {
         store.pushAssistantHistoryBlocks(sessionId, streamState.contentBlocks);
       }
+
+      finalStopReason = streamState.stopReason;
+      finalErrorMessage = streamState.errorMessage;
+      finalStopReasonDetail = streamState.stopReasonDetail;
 
       if (
         !provider.supportsFlootTools ||
@@ -714,11 +734,25 @@ async function runAssistantTurn(
     }
 
     if (signal.aborted) {
-      store.appendError(sessionId, "Interrupted by user");
-      store.setStatus(sessionId, "idle");
+      store.appendEndReason(sessionId, "Interrupted by user");
+    } else if (finalStopReason === "error") {
+      store.appendEndReason(
+        sessionId,
+        finalErrorMessage
+          ? `Ended unexpectedly: ${finalErrorMessage}`
+          : "Ended unexpectedly"
+      );
+    } else if (finalStopReason === "stop") {
+      store.appendEndReason(
+        sessionId,
+        finalStopReasonDetail
+          ? `Stopped: ${finalStopReasonDetail}`
+          : "Stopped"
+      );
     } else {
-      store.setStatus(sessionId, "idle");
+      store.appendEndReason(sessionId, "Done");
     }
+    store.setStatus(sessionId, "idle");
   } catch (err) {
     if (signal.aborted) {
       if (pendingToolUses.length > 0) {
@@ -731,7 +765,7 @@ async function runAssistantTurn(
         }
         store.pushUserHistoryBlocks(sessionId, pendingToolResults);
       }
-      store.appendError(sessionId, "Interrupted by user");
+      store.appendEndReason(sessionId, "Interrupted by user");
       store.setStatus(sessionId, "idle");
     } else {
       const message = err instanceof Error ? err.message : String(err);
@@ -789,7 +823,7 @@ async function handleAudioMessage(
   } catch (err) {
     if (controller.signal.aborted) {
       activeTurnControllers.delete(sessionId);
-      store.appendError(sessionId, "Interrupted by user");
+      store.appendEndReason(sessionId, "Interrupted by user");
       store.setStatus(sessionId, "idle");
       return;
     }

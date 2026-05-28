@@ -56,3 +56,24 @@ export function ErrorBubble({ text }: ErrorBubbleProps) {
     </div>
   );
 }
+
+interface EndReasonProps {
+  text: string;
+}
+
+export function EndReasonBadge({ text }: EndReasonProps) {
+  const variant =
+    text.startsWith("Ended unexpectedly")
+      ? "error"
+      : text === "Interrupted by user"
+      ? "interrupted"
+      : text.startsWith("Stopped")
+      ? "stopped"
+      : "ok";
+  return (
+    <div className={`end-reason end-reason-${variant}`}>
+      <span className="end-reason-dot" />
+      {text}
+    </div>
+  );
+}
