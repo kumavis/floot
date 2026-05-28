@@ -4,13 +4,15 @@ import { unlink } from "fs/promises";
 import { randomUUID } from "crypto";
 import path from "path";
 import type { TTSStream, TTSProvider } from "./types.js";
-
-// Split on sentence boundaries - periods, question marks, exclamation points, newlines
-const SENTENCE_ENDINGS = /(?<=[.!?\n])\s*/;
-const MIN_CHUNK_LENGTH = 10; // Don't send tiny fragments
+import {
+  createSentenceChunkerState,
+  flushRemaining,
+  pushText,
+  type SentenceChunkerState,
+} from "./sentence-chunker.js";
 
 export class SayTTSStream extends EventEmitter implements TTSStream {
-  private buffer = "";
+  private chunker: SentenceChunkerState = createSentenceChunkerState();
   private chunkIndex = 0;
   private processing = false;
   private queue: string[] = [];
@@ -27,47 +29,22 @@ export class SayTTSStream extends EventEmitter implements TTSStream {
 
   write(text: string): void {
     if (this.aborted) return;
-    this.buffer += text;
-    this.tryFlushSentences();
+    this.queue.push(...pushText(this.chunker, text));
+    this.processQueue();
   }
 
   end(): void {
     if (this.aborted) return;
     this.ended = true;
-    // Flush any remaining text
-    if (this.buffer.trim()) {
-      this.queue.push(this.buffer.trim());
-      this.buffer = "";
-    }
+    this.queue.push(...flushRemaining(this.chunker));
     this.processQueue();
   }
 
   abort(): void {
     this.aborted = true;
     this.queue = [];
-    this.buffer = "";
+    this.chunker = createSentenceChunkerState();
     this.emit("done");
-  }
-
-  private tryFlushSentences(): void {
-    // Split on sentence boundaries
-    const parts = this.buffer.split(SENTENCE_ENDINGS);
-    
-    // Keep the last part in buffer (might be incomplete)
-    this.buffer = parts.pop() || "";
-    
-    // Queue complete sentences
-    for (const part of parts) {
-      const trimmed = part.trim();
-      if (trimmed.length >= MIN_CHUNK_LENGTH) {
-        this.queue.push(trimmed);
-      } else if (trimmed) {
-        // Too short, prepend to buffer
-        this.buffer = trimmed + " " + this.buffer;
-      }
-    }
-    
-    this.processQueue();
   }
 
   private async processQueue(): Promise<void> {
@@ -89,8 +66,13 @@ export class SayTTSStream extends EventEmitter implements TTSStream {
     }
 
     this.processing = false;
-    
-    if (!this.aborted && this.ended && this.queue.length === 0 && !this.buffer.trim()) {
+
+    if (
+      !this.aborted &&
+      this.ended &&
+      this.queue.length === 0 &&
+      !this.chunker.buffer.trim()
+    ) {
       this.emit("done");
     }
   }

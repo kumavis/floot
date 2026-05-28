@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "concurrently -k -n server,client -c blue,magenta \"tsx watch src/server.ts\" \"vite build --watch\"",
     "build": "vite build",
-    "start": "vite build && tsx src/server.ts"
+    "start": "vite build && tsx src/server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.89.0",
@@ -27,6 +29,7 @@
     "concurrently": "^9.2.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
-    "vite": "^8.0.14"
+    "vite": "^8.0.14",
+    "vitest": "^3.2.4"
   }
 }
